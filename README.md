@@ -6,8 +6,9 @@ Tutti i dati restano in locale: un file SQLite sul Raspberry Pi o sul telefono, 
 ## Struttura
 
 ```
-src/pfb_core/   logica pura (schema, import, regole, metriche) — nessuna dipendenza dalla UI
-app/            interfaccia Flet (web sul Raspberry, poi APK Android)
+src/pfb_core/   logica pura (schema, parser, regole, import) — nessuna dipendenza dalla UI
+src/pfb_app/    schermate Flet
+src/main.py     punto d'ingresso Flet (web sul Raspberry, desktop, APK Android)
 tests/          test pytest; fixture solo anonimizzate
 data/           database e export reali — ignorata da git
 ```
@@ -17,10 +18,27 @@ data/           database e export reali — ignorata da git
 ```bash
 uv sync --group dev
 cp config.example.toml config.toml     # inserisci i tuoi IBAN
-uv run python -m pfb_core init          # crea data/pfb.sqlite con categorie, strumenti e conti
+uv run python -m pfb_core init          # crea data/pfb.sqlite con categorie, regole, strumenti e conti
 uv run pytest
-uv run --extra app flet run app/main.py
+
+# import da riga di comando
+uv run python -m pfb_core import "Trade Republic" ~/Downloads/Esportazione_operazioni.csv
+uv run python -m pfb_core import BPER ~/Downloads/Lista_Movimenti.xls
+uv run python -m pfb_core review        # movimenti ancora da categorizzare
+
+# interfaccia
+uv run --extra app flet run src/main.py            # desktop
+uv run --extra web flet run --web src/main.py      # web, es. sul Raspberry Pi
+uv run --extra app flet build apk                  # APK Android
 ```
+
+## Categorizzazione
+
+Ogni movimento importato passa per un motore di regole (`src/pfb_core/rules.py`), valutate in ordine
+di priorità: IBAN dei propri conti (giroconti) → correzioni fatte in app → tipo operazione →
+regole personali di `config.toml` → categoria della banca → esercenti noti → codice MCC.
+Quello che resta finisce nella schermata **Da rivedere**: scegliendo una categoria l'app crea
+una regola sulla controparte e la applica subito agli altri movimenti uguali.
 
 ## Privacy
 

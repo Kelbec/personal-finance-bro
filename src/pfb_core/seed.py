@@ -19,7 +19,10 @@ from pfb_core.models import (
     CategoryGroup,
     Instrument,
     Owner,
+    RuleField,
+    RuleOrigin,
 )
+from pfb_core.rules import PRIO_CONFIG, PRIO_INTERNAL, seed_default_rules, upsert_rule
 
 G = CategoryGroup
 
@@ -110,11 +113,32 @@ def seed_from_config(s: Session, config_path: str | Path) -> int:
         if a["name"] not in existing
     ]
     s.add_all(new)
+    s.flush()
+
+    # IBAN dei propri conti → giroconto
+    for a in cfg.get("accounts", []):
+        if a.get("iban"):
+            upsert_rule(s, RuleField.IBAN, a["iban"], is_internal=True,
+                        priority=PRIO_INTERNAL, origin=RuleOrigin.CONFIG)  # fmt: skip
+
+    # regole personali
+    for r in cfg.get("rules", []):
+        upsert_rule(
+            s,
+            RuleField(r["field"]),
+            r["pattern"],
+            category=r.get("category"),
+            is_internal=r.get("internal", False),
+            priority=r.get("priority", PRIO_CONFIG),
+            origin=RuleOrigin.CONFIG,
+        )
     return len(new)
 
 
 def seed_all(s: Session, config_path: str | Path | None = None) -> dict[str, int]:
     counts = {"categories": seed_categories(s), "instruments": seed_instruments(s)}
+    s.flush()
+    counts["rules"] = seed_default_rules(s)
     if config_path is not None:
         counts["accounts"] = seed_from_config(s, config_path)
     s.commit()

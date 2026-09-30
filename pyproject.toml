@@ -13,22 +13,23 @@ dependencies = [
 
 [project.optional-dependencies]
 app = ["flet>=1.0"]
+web = ["flet>=1.0", "flet-web>=1.0"]  # modalità web sul Raspberry Pi
 prices = ["yfinance>=0.2"]
 assistant = ["ollama>=0.4"]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "ruff>=0.6", "xlwt>=1.3"]  # xlwt: genera .xls BPER finti nei test
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pfb_core"]
+packages = ["src/pfb_core", "src/pfb_app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [tool.ruff]
 line-length = 100
@@ -36,3 +37,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.flet.app]
+path = "src"  # main.py e i pacchetti pfb_core / pfb_app finiscono nell'APK
+
+[tool.flet]
+product = "Personal Finance Bro"

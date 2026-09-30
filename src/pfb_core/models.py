@@ -46,7 +46,7 @@ class RuleField(StrEnum):
     TYPE = "type"  # tipo operazione (es. BUY, INTEREST_PAYMENT)
     COUNTERPARTY = "counterparty"  # nome controparte, regex case-insensitive
     IBAN = "iban"  # IBAN controparte, match esatto
-    MCC = "mcc"  # codice esercente carta
+    MCC = "mcc"  # codice esercente carta; accetta anche intervalli "3501-3999"
     BANK_CATEGORY = "bank_category"  # categoria assegnata dalla banca (BPER)
     DESCRIPTION = "description"  # descrizione, regex case-insensitive
 
@@ -82,7 +82,7 @@ class ImportBatch(SQLModel, table=True):
     account_id: int = Field(foreign_key="account.id")
     filename: str
     file_hash: str = Field(index=True)
-    imported_at: dt.datetime = Field(default_factory=dt.datetime.now)
+    imported_at: dt.datetime = Field(default_factory=lambda: dt.datetime.now(dt.UTC))
     rows_new: int = 0
     rows_duplicate: int = 0
 
@@ -106,13 +106,22 @@ class Transaction(SQLModel, table=True):
     import_batch_id: int | None = Field(default=None, foreign_key="importbatch.id")
 
 
+class RuleOrigin(StrEnum):
+    DEFAULT = "default"  # regole generiche incluse nell'app
+    CONFIG = "config"  # regole personali da config.toml
+    USER = "user"  # create correggendo una categoria nella coda di revisione
+
+
 class Rule(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("field", "pattern"),)
+
     id: int | None = Field(default=None, primary_key=True)
     priority: int = 100  # più basso = valutata prima
     field: RuleField
     pattern: str
     category_id: int | None = Field(default=None, foreign_key="category.id")
-    is_internal: bool = False
+    is_internal: bool = False  # giroconto: esclude il movimento dal cashflow
+    origin: RuleOrigin = RuleOrigin.DEFAULT
     enabled: bool = True
 
 

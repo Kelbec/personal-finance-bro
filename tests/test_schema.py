@@ -43,8 +43,10 @@ def account(s):
 def test_seed_is_idempotent(s):
     first = seed_all(s)
     second = seed_all(s)
-    assert first == {"categories": len(CATEGORIES), "instruments": 7}
-    assert second == {"categories": 0, "instruments": 0}
+    assert first["categories"] == len(CATEGORIES)
+    assert first["instruments"] == 7
+    assert first["rules"] > 0
+    assert second == {"categories": 0, "instruments": 0, "rules": 0}
 
 
 def test_every_group_has_categories(s):
