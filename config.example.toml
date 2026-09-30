@@ -29,3 +29,27 @@ source = "manuale"
 name = "Satispay"
 kind = "wallet"
 source = "manuale"
+
+# Regole personali di categorizzazione (priorità 20: dopo il tipo operazione,
+# prima di esercenti e codici MCC). Campi: type, counterparty, iban, mcc,
+# bank_category, description. counterparty/description sono regex case-insensitive.
+[[rules]]
+field = "counterparty"
+pattern = "NOME DATORE DI LAVORO"
+category = "Stipendio/Pensione"
+
+[[rules]]
+field = "bank_category"
+pattern = "F24"
+category = "Costi attività lavorativa"
+
+[[rules]]
+field = "counterparty"
+pattern = "NOME COMMERCIALISTA"
+category = "Costi attività lavorativa"
+
+# Bonifici su BPER in arrivo da Trade Republic (ABI 03674): giroconto
+[[rules]]
+field = "description"
+pattern = "ABI-CAB: 03674"
+internal = true
