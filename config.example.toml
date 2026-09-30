@@ -1,0 +1,31 @@
+# Copia questo file in config.toml (ignorato da git) e compila i tuoi dati.
+
+[database]
+path = "data/pfb.sqlite"
+
+[owner]
+name = "Marco"
+
+# IBAN dei tuoi conti: servono a riconoscere i giroconti interni,
+# che vengono esclusi dal cashflow.
+[[accounts]]
+name = "BPER"
+kind = "conto"
+source = "xls_bper"
+iban = "IT00X0000000000000000000000"
+
+[[accounts]]
+name = "Trade Republic"
+kind = "broker"
+source = "csv_tr"
+iban = "IT00X0000000000000000000000"
+
+[[accounts]]
+name = "PayPal"
+kind = "wallet"
+source = "manuale"
+
+[[accounts]]
+name = "Satispay"
+kind = "wallet"
+source = "manuale"
