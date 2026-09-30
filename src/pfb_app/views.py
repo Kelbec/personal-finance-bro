@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -12,6 +13,7 @@ from sqlmodel import select
 
 from pfb_core.db import session
 from pfb_core.importer import ImportFailed, import_file
+from pfb_core.metrics import MonthSummary, available_months, month_summary, monthly_trend
 from pfb_core.models import Account, AccountSource, Category, CategoryGroup, Transaction
 from pfb_core.rules import mark_internal, pending_review, set_category
 
@@ -196,3 +198,116 @@ class ReviewView(ft.Column):
             mark_internal(s, s.get(Transaction, e.control.data))
         _toast(self, "Segnato come giroconto")
         self.refresh()
+
+
+def _eur(value) -> str:
+    return f"{value:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _month_label(month: dt.date) -> str:
+    return f"{month:%m/%Y}"
+
+
+class DashboardView(ft.Column):
+    """Cashflow del mese: entrate, uscite, savings rate, categorie vs budget, ultimi mesi."""
+
+    def __init__(self, engine: Engine):
+        super().__init__(spacing=12, expand=True, scroll=ft.ScrollMode.AUTO)
+        self.engine = engine
+        self.month_picker = ft.Dropdown(label="Mese", width=160, on_select=self._on_month)
+        self.kpis = ft.Row(wrap=True, spacing=12)
+        self.categories = ft.Column(spacing=8)
+        self.trend = ft.Column(spacing=2)
+        self.controls = [
+            ft.Text("Cashflow", size=22, weight=ft.FontWeight.BOLD),
+            self.month_picker,
+            self.kpis,
+            ft.Text("Spese per categoria", size=16, weight=ft.FontWeight.W_600),
+            self.categories,
+            ft.Text("Ultimi mesi", size=16, weight=ft.FontWeight.W_600),
+            self.trend,
+        ]
+        self.refresh(update=False)
+
+    def refresh(self, update: bool = True) -> None:
+        with session(self.engine) as s:
+            months = available_months(s)
+            selected = (
+                dt.date.fromisoformat(self.month_picker.value)
+                if self.month_picker.value
+                else (months[0] if months else dt.date.today().replace(day=1))
+            )
+            self.month_picker.options = [
+                ft.dropdown.Option(key=m.isoformat(), text=_month_label(m)) for m in months
+            ]
+            self.month_picker.value = selected.isoformat() if months else None
+            summary = month_summary(s, selected)
+            trend = monthly_trend(s, months=6, until=selected)
+        self._show(summary, trend)
+        if update:
+            _refresh(self)
+
+    def _on_month(self, e: ft.Event[ft.Dropdown]) -> None:
+        self.refresh()
+
+    def _show(self, m: MonthSummary, trend: list[MonthSummary]) -> None:
+        rate = f"{m.savings_rate:.0%}" if m.savings_rate is not None else "—"
+        tiles = [
+            ("Entrate", _eur(m.income)),
+            ("Uscite", _eur(m.expenses)),
+            ("Saldo", _eur(m.net)),
+            ("Savings rate", rate),
+            ("Risparmiato/investito", _eur(m.saved)),
+        ]
+        self.kpis.controls = [
+            ft.Card(
+                content=ft.Container(
+                    padding=12,
+                    content=ft.Column(
+                        spacing=2,
+                        controls=[
+                            ft.Text(label, size=12),
+                            ft.Text(value, size=18, weight=ft.FontWeight.BOLD),
+                        ],
+                    ),
+                )
+            )
+            for label, value in tiles
+        ]
+        if m.uncategorized:
+            self.kpis.controls.append(
+                ft.Text(f"{m.uncategorized} movimenti da rivedere non sono nei totali", size=12)
+            )
+        self.categories.controls = [self._category_row(c) for c in m.by_category] or [
+            ft.Text("Nessuna spesa categorizzata in questo mese.")
+        ]
+        self.trend.controls = [
+            ft.Row(
+                [
+                    ft.Text(_month_label(t.month), width=70),
+                    ft.Text(f"entrate {_eur(t.income)}", width=170),
+                    ft.Text(f"uscite {_eur(t.expenses)}", width=170),
+                    ft.Text(
+                        f"risparmio {t.savings_rate:.0%}" if t.savings_rate is not None else "—"
+                    ),
+                ]
+            )
+            for t in trend
+        ]
+
+    @staticmethod
+    def _category_row(c) -> ft.Control:
+        label = f"{c.category.label}  {_eur(c.spent)}"
+        if c.budget is None:
+            return ft.Text(label)
+        ratio = float(c.spent / c.budget) if c.budget else 0.0
+        return ft.Column(
+            spacing=2,
+            controls=[
+                ft.Text(f"{label} / {_eur(c.budget)}"),
+                ft.ProgressBar(
+                    value=min(ratio, 1.0),
+                    color=ft.Colors.ERROR if c.over_budget else None,
+                ),
+            ],
+        )

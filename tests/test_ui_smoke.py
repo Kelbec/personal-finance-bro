@@ -47,3 +47,14 @@ def test_mark_internal_from_review(engine, s, tr_account, tr_csv):
     tx = s.exec(select(Transaction).where(Transaction.counterparty == "Mario Rossi")).one()
     review._on_internal(SimpleNamespace(control=SimpleNamespace(data=tx.id)))
     assert review.header.value != before
+
+
+def test_dashboard_reflects_import(engine, s, tr_account, tr_csv):
+    from pfb_app.views import DashboardView
+
+    dash = DashboardView(engine)
+    assert dash.month_picker.value is None
+    ImportView(engine)._run_import(tr_account.id, tr_csv)
+    dash.refresh()
+    assert dash.month_picker.value is not None
+    assert len(dash.kpis.controls) >= 5
