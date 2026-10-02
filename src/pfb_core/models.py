@@ -144,8 +144,20 @@ class Trade(SQLModel, table=True):
     price: Decimal = Field(max_digits=14, decimal_places=6)
     amount: Decimal = Field(max_digits=14, decimal_places=4)
     fee: Decimal = Field(default=Decimal(0), max_digits=10, decimal_places=4)
-    origin: str = "manuale"  # piano, manuale, saveback
+    origin: str = "manuale"  # piano, manuale, iniziale (posizione di partenza)
     source_id: str
+
+
+class Price(SQLModel, table=True):
+    """Prezzo di chiusura giornaliero di uno strumento (cache locale dei prezzi scaricati)."""
+
+    __table_args__ = (UniqueConstraint("isin", "date"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    isin: str = Field(foreign_key="instrument.isin", index=True)
+    date: dt.date
+    close: Decimal = Field(max_digits=14, decimal_places=6)
+    source: str = "yahoo"  # yahoo, manuale
 
 
 class Snapshot(SQLModel, table=True):
@@ -160,4 +172,4 @@ class Snapshot(SQLModel, table=True):
     shares: Decimal | None = Field(default=None, max_digits=18, decimal_places=8)
     price: Decimal | None = Field(default=None, max_digits=14, decimal_places=6)
     value: Decimal = Field(max_digits=14, decimal_places=2)
-    is_manual: bool = False
+    is_manual: bool = False  # valore fornito (a mano o dall'export), non ricalcolato

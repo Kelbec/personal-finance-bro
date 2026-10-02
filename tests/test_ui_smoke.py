@@ -58,3 +58,24 @@ def test_dashboard_reflects_import(engine, s, tr_account, tr_csv):
     dash.refresh()
     assert dash.month_picker.value is not None
     assert len(dash.kpis.controls) >= 5
+
+
+def test_portfolio_view_renders_and_saves_balance(engine, s, tr_account):
+    from pfb_app.views import PortfolioView
+    from pfb_core.portfolio import add_initial_position
+
+    view = PortfolioView(engine)
+    assert any("Nessun dato" in getattr(c, "value", "") for c in view.allocation.controls)
+
+    import datetime as dt
+    from decimal import Decimal
+
+    add_initial_position(s, tr_account, "IE00BK5BQT80", Decimal(10), Decimal(100),
+                         dt.date(2026, 8, 31))  # fmt: skip
+    view.balance_account.value = str(tr_account.id)
+    view.balance_date.value = "2026-08-31"
+    view.balance_value.value = "1.234,50".replace(".", "")
+    view._on_balance(None)
+    assert view.positions.controls  # VWCE + liquidità Trade Republic
+    assert any(getattr(t, "value", "").startswith("Patrimonio") for t in
+               (c.content.content.controls[0] for c in view.kpis.controls))  # fmt: skip

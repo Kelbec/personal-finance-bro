@@ -79,7 +79,7 @@ def _save_balance(s: Session, account: Account, parsed: ParseResult) -> bool:
     if snap is None:
         snap = Snapshot(month=month, account_id=account.id, value=parsed.balance.value)
     snap.value = parsed.balance.value
-    snap.is_manual = False
+    snap.is_manual = True  # saldo fornito dalla banca: ancora per i mesi successivi
     s.add(snap)
     return True
 

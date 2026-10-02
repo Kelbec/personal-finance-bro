@@ -53,3 +53,9 @@ category = "Costi attività lavorativa"
 field = "description"
 pattern = "ABI-CAB: 03674"
 internal = true
+
+# Strumenti: simbolo Yahoo Finance per scaricare i prezzi (in EUR), asset class
+# (stock, bond, commodity) o strumenti nuovi non presenti nel seed.
+[[instruments]]
+isin = "JE00BQRFDY49"
+yahoo_symbol = "SIMBOLO.DE"
