@@ -22,6 +22,6 @@ Dati solo in locale: SQLite, niente cloud. Lingua del progetto: italiano (UI, co
 - Flet ≥ 1.0: `ft.run(main)`, `await ft.FilePicker().pick_files(...)`, `page.show_dialog(ft.SnackBar(...))`.
 
 ## Roadmap
-0 setup ✅ · 1 import e regole ✅ (branch `fase-1-import`) · 2 dashboard cashflow · 3 patrimonio
+0 setup ✅ · 1 import e regole ✅ · 2 dashboard cashflow ✅ (branch `fase-2-dashboard`) · 3 patrimonio
 (trade, prezzi yfinance, snapshot, XIRR) · 4 storico dai fogli + Raspberry · 5 APK Android ·
 6 assistente con Ollama locale (notebook MSI, RTX 2060 6 GB → modelli 7–8B a 4 bit).

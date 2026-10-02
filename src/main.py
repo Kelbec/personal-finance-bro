@@ -16,7 +16,7 @@ from pathlib import Path
 
 import flet as ft
 
-from pfb_app.views import ImportView, ReviewView
+from pfb_app.views import DashboardView, ImportView, ReviewView
 from pfb_core.db import get_engine, init_db, session
 from pfb_core.seed import seed_all
 
@@ -31,19 +31,24 @@ def main(page: ft.Page) -> None:
     with session(engine) as s:
         seed_all(s, CONFIG_PATH if CONFIG_PATH.exists() else None)
 
+    dashboard = DashboardView(engine)
     review = ReviewView(engine)
-    views: list[ft.Control] = [ImportView(engine, on_imported=review.refresh), review]
+    imports = ImportView(engine, on_imported=lambda: (review.refresh(), dashboard.refresh()))
+    views: list[ft.Control] = [dashboard, imports, review]
     body = ft.Container(content=views[0], expand=True, padding=16)
 
     def on_nav(e: ft.Event[ft.NavigationBar]) -> None:
         idx = e.control.selected_index
         body.content = views[idx]
-        if idx == 1:
+        if idx == 0:
+            dashboard.refresh()
+        elif idx == 2:
             review.refresh()
         page.update()
 
     page.navigation_bar = ft.NavigationBar(
         destinations=[
+            ft.NavigationBarDestination(icon=ft.Icons.INSIGHTS, label="Cashflow"),
             ft.NavigationBarDestination(icon=ft.Icons.UPLOAD_FILE, label="Import"),
             ft.NavigationBarDestination(icon=ft.Icons.RULE, label="Da rivedere"),
         ],
