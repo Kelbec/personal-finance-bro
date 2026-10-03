@@ -1,5 +1,6 @@
 """Smoke test delle schermate Flet senza client grafico (saltato se flet non è installato)."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -79,3 +80,25 @@ def test_portfolio_view_renders_and_saves_balance(engine, s, tr_account):
     assert view.positions.controls  # VWCE + liquidità Trade Republic
     assert any(getattr(t, "value", "").startswith("Patrimonio") for t in
                (c.content.content.controls[0] for c in view.kpis.controls))  # fmt: skip
+
+
+def test_pick_registers_picker_on_page_and_imports(engine, tr_account, tr_csv, monkeypatch):
+    from pfb_app import views
+
+    updates = []
+    page = SimpleNamespace(services=[], update=lambda: updates.append(1))
+    monkeypatch.setattr(views, "_page", lambda control: page)
+    monkeypatch.setattr(views, "_refresh", lambda control: None)
+
+    async def fake_pick(self, **kwargs):
+        assert kwargs["allowed_extensions"] == ["csv"]
+        return [SimpleNamespace(path=str(tr_csv), name=tr_csv.name, bytes=None)]
+
+    monkeypatch.setattr(ft.FilePicker, "pick_files", fake_pick)
+    view = ImportView(engine)
+    view.account.value = str(tr_account.id)
+    asyncio.run(view._pick(None))
+
+    assert len(page.services) == 1  # il FilePicker è registrato sulla pagina
+    assert updates  # e la pagina è stata aggiornata, così il client lo conosce
+    assert any("Nuovi" in c.value for c in view.result.controls)
