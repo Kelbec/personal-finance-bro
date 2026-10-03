@@ -4,8 +4,10 @@
 - Costo di carico: metodo del costo medio; le vendite riducono il costo in proporzione.
 - Liquidità di un conto: ultimo saldo "ancora" (inserito a mano o letto dall'export BPER)
   più i movimenti successivi. Senza ancora il saldo non è calcolabile.
-- XIRR: dal primo mese con snapshot, usando il valore di mercato iniziale come primo flusso;
-  così non serve conoscere il prezzo d'acquisto storico di tutto il portafoglio.
+- XIRR: se ci sono posizioni di partenza, dal loro giorno, usando il valore di mercato di
+  allora come primo flusso (non serve il prezzo d'acquisto storico); altrimenti dal primo
+  trade, con tutti gli acquisti a prezzo reale. Gli snapshot storici dei fogli non bastano:
+  non dicono quanto è stato versato tra un mese e l'altro.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from sqlmodel import Session, select
 
 from pfb_core.models import (
     Account,
+    AccountKind,
     AssetClass,
     Instrument,
     Snapshot,
@@ -121,6 +124,11 @@ def add_initial_position(
 
 
 # --- liquidità ---------------------------------------------------------------
+def _cash_accounts(s: Session) -> list[Account]:
+    """Conti con un saldo; esclusi quelli che raccolgono solo lo storico dei fogli."""
+    return [a for a in s.exec(select(Account)).all() if a.kind != AccountKind.STORICO]
+
+
 def set_balance(s: Session, account: Account, day: dt.date, value: Decimal) -> Snapshot:
     """Saldo di un conto a fine mese, inserito a mano: fa da ancora per i mesi successivi."""
     month = month_end(day)
@@ -202,9 +210,9 @@ def build_snapshots(s: Session, month: dt.date) -> list[str]:
             continue
         _upsert(s, month, account_id, isin, shares=qty, price=quote[0],
                 value=(qty * quote[0]).quantize(CENT))  # fmt: skip
-        if (month - quote[1]).days > 7:
+        if (min(month, dt.date.today()) - quote[1]).days > 7:  # mese in corso: rispetto a oggi
             warnings.append(f"{s.get(Instrument, isin).ticker}: prezzo vecchio ({quote[1]})")
-    for account in s.exec(select(Account)).all():
+    for account in _cash_accounts(s):
         value = cash_balance(s, account, month)
         if value is None:
             warnings.append(f"{account.name}: manca un saldo di partenza")
@@ -328,26 +336,29 @@ class PortfolioSummary:
 
 
 def portfolio_xirr(s: Session, day: dt.date) -> tuple[float | None, dt.date | None]:
-    series = [m for m in net_worth_series(s) if m.month <= day]
-    start = next((m for m in series if any(k != CASH for k in m.by_class)), None)
-    if start is None:
+    trades = s.exec(select(Trade).where(Trade.date <= day).order_by(Trade.date)).all()
+    initial = [t.date for t in trades if t.origin == "iniziale"]
+    if initial:
+        start = max(initial)
+        opening = sum((p.value or ZERO for p in positions(s, start)), ZERO)
+        flows = [(start, -float(opening))]
+        flows += [(t.date, float(t.amount)) for t in trades
+                  if t.date > start and t.origin != "iniziale"]  # fmt: skip
+    elif trades:
+        start = trades[0].date
+        flows = [(t.date, float(t.amount)) for t in trades]  # acquisti negativi, vendite positive
+    else:
         return None, None
-    securities_start = sum((v for k, v in start.by_class.items() if k != CASH), ZERO)
-    flows = [(start.month, -float(securities_start))]
-    for t in s.exec(
-        select(Trade).where(Trade.date > start.month, Trade.date <= day, Trade.origin != "iniziale")
-    ).all():
-        flows.append((t.date, float(t.amount)))  # acquisti negativi, vendite positive
     current = sum((p.value or ZERO for p in positions(s, day)), ZERO)
     flows.append((day, float(current)))
-    return xirr(flows), start.month
+    return xirr(flows), start
 
 
 def portfolio_summary(s: Session, day: dt.date | None = None) -> PortfolioSummary:
     day = day or dt.date.today()
     pos = positions(s, day)
     cash = {}
-    for account in s.exec(select(Account)).all():
+    for account in _cash_accounts(s):
         value = cash_balance(s, account, day)
         if value is not None:
             cash[account.name] = value

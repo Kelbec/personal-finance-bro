@@ -9,18 +9,27 @@ python -m pfb_core balance "Trade Republic" 2026-08-31 1250.00
 python -m pfb_core prices                       scarica i prezzi (uv sync --extra prices)
 python -m pfb_core snapshot                     ricalcola gli snapshot di fine mese
 python -m pfb_core portfolio                    riepilogo del patrimonio
+python -m pfb_core storico-cashflow CashFlow.xlsx           movimenti dai fogli Google
+python -m pfb_core storico-patrimonio Asset_allocation.xlsx snapshot mensili e posizioni
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import sys
 from decimal import Decimal
 from pathlib import Path
 
 from sqlmodel import select
 
 from pfb_core.db import get_engine, init_db, session
+from pfb_core.history import (
+    import_asset_allocation,
+    import_cashflow,
+    initial_positions_from_snapshots,
+    instruments_at,
+)
 from pfb_core.importer import ImportFailed, import_file
 from pfb_core.models import Account
 from pfb_core.portfolio import (
@@ -143,7 +152,53 @@ def _cmd_portfolio(args) -> None:
         print(f"  {k:<10} {v:.1%}")
 
 
+def _cmd_history_cashflow(args) -> None:
+    engine = get_engine(args.db)
+    init_db(engine)
+    with session(engine) as s:
+        r = import_cashflow(s, args.file, args.fogli)
+    print(f"Fogli letti: {', '.join(r.sheets) or 'nessuno'}")
+    print(f"{r.new} movimenti nuovi, {r.duplicates} già presenti")
+    for owner, n in r.by_owner.items():
+        print(f"  Storico {owner}: {n}")
+    for label, n in r.unknown_categories.items():
+        print(f"  ! categoria sconosciuta {label!r}: {n} movimenti saltati")
+
+
+def _cmd_history_portfolio(args) -> None:
+    engine = get_engine(args.db)
+    init_db(engine)
+    with session(engine) as s:
+        broker = _account(s, args.broker)
+        r = import_asset_allocation(s, args.file, broker)
+        if not r.months:
+            raise SystemExit("Nessun foglio anno (es. '2025') con valori trovato")
+        print(f"{r.snapshots} valori mensili, da {r.months[0]:%m/%Y} a {r.last_month:%m/%Y}")
+        for name in r.created_accounts:
+            print(f"  conto creato: {name}")
+        for name in r.created_instruments:
+            print(f"  strumento creato (senza ISIN): {name}")
+        for name in r.closed_accounts:
+            print(f"  conto non più nel foglio, saldo azzerato: {name}")
+        if args.senza_posizioni:
+            return
+        start = r.last_month
+        fetched = fetch_prices(s, start=start - dt.timedelta(days=10), end=start,
+                               isins=instruments_at(s, broker, start))  # fmt: skip
+        for ticker, err in fetched.errors.items():
+            print(f"  ! prezzi {ticker}: {err}")
+        pos = initial_positions_from_snapshots(s, broker, start)
+        print(f"Posizioni di partenza al {start} (costo di carico = prezzo del giorno):")
+        for ticker, shares, value in pos.created:
+            print(f"  {ticker:<6} {shares:>14.8f} quote  {value:>11,.2f} €")
+        for ticker in pos.missing_price:
+            print(f"  ! {ticker}: nessun prezzo al {start}, posizione non creata")
+
+
 def main() -> None:
+    for stream in (sys.stdout, sys.stderr):  # € e accenti nel terminale di Windows
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="pfb_core")
     parser.add_argument("--db", default="data/pfb.sqlite")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -185,6 +240,28 @@ def main() -> None:
     p_pf = sub.add_parser("portfolio", help="riepilogo del patrimonio")
     p_pf.add_argument("--data", help="data di riferimento, default oggi")
     p_pf.set_defaults(func=_cmd_portfolio)
+
+    p_hc = sub.add_parser("storico-cashflow", help="movimenti storici dai fogli Google (.xlsx)")
+    p_hc.add_argument("file")
+    p_hc.add_argument(
+        "--fogli",
+        nargs="+",
+        help="fogli da leggere; default: tutti quelli "
+        "con colonne Causale, Categoria, Importo, Data, ..., Intestatario",
+    )
+    p_hc.set_defaults(func=_cmd_history_cashflow)
+
+    p_hp = sub.add_parser(
+        "storico-patrimonio", help="valori mensili dai fogli anno e posizioni di partenza"
+    )
+    p_hp.add_argument("file")
+    p_hp.add_argument("--broker", default="Trade Republic", help="conto dei titoli")
+    p_hp.add_argument(
+        "--senza-posizioni",
+        action="store_true",
+        help="importa solo lo storico, senza creare le posizioni di partenza",
+    )
+    p_hp.set_defaults(func=_cmd_history_portfolio)
 
     args = parser.parse_args()
     args.func(args)

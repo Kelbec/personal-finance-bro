@@ -26,6 +26,7 @@ class AccountKind(StrEnum):
     PREPAGATA = "prepagata"
     WALLET = "wallet"
     BROKER = "broker"
+    STORICO = "storico"  # movimenti importati dai fogli: nessun saldo, escluso dalla liquidità
 
 
 class AccountSource(StrEnum):

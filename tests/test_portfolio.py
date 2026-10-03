@@ -97,6 +97,7 @@ def test_fetch_prices_stores_and_is_incremental(s, tr_account):
 
 def test_fetch_prices_reports_missing_symbol_and_errors(s, tr_account):
     wslv = "JE00BQRFDY49"
+    s.get(Instrument, wslv).yahoo_symbol = None
     add_initial_position(s, tr_account, wslv, D("1"), D("10"), dt.date(2026, 8, 31))
     add_initial_position(s, tr_account, VWCE, D("1"), D("10"), dt.date(2026, 8, 31))
 

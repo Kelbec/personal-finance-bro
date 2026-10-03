@@ -48,9 +48,30 @@ uv run python -m pfb_core portfolio     # patrimonio, P&L, rendimento, allocazio
 
 Quote = trade importati + posizioni di partenza; valore = quote × ultima chiusura.
 La liquidità di ogni conto parte dall'ultimo saldo noto (inserito a mano o letto dall'export
-BPER) più i movimenti successivi. Il rendimento è un XIRR calcolato dal primo mese con
-prezzi disponibili; sotto l'anno viene mostrato cumulato, non annualizzato.
-I simboli Yahoo si correggono in `config.toml` (`[[instruments]]`).
+BPER) più i movimenti successivi. Il rendimento è un XIRR calcolato dal giorno delle posizioni
+di partenza (o dal primo acquisto, se non ce ne sono); sotto l'anno viene mostrato cumulato,
+non annualizzato. I simboli Yahoo si correggono in `config.toml` (`[[instruments]]`).
+
+## Storico dai fogli Google
+
+Una tantum, con i fogli esportati in `.xlsx` (File → Scarica → Microsoft Excel):
+
+```bash
+# movimenti: fogli con colonne Causale | Categoria | Importo | Data | Mese | Intestatario
+uv run python -m pfb_core storico-cashflow CashFlow.xlsx
+# patrimonio: fogli anno ("2024", "2025", ...) con i mesi in colonna e le sezioni CASH/BONDS/STOCKS
+uv run python -m pfb_core storico-patrimonio Asset_allocation.xlsx
+```
+
+- I movimenti finiscono su un conto "Storico <intestatario>" (fuori dal calcolo della
+  liquidità), già categorizzati: il segno viene dal gruppo della categoria. Se lo stesso
+  movimento è in più fogli (es. totale e foglio personale) viene importato una volta sola.
+- Ogni valore mensile del patrimonio diventa uno snapshot di fine mese; i saldi dei conti
+  fanno da punto di partenza per la liquidità. Un conto che sparisce dal foglio di un anno
+  viene azzerato da quell'anno.
+- Dall'ultimo mese del foglio nascono le posizioni di partenza: quote = valore ÷ chiusura
+  Yahoo del giorno, costo di carico = quella chiusura (il P&L parte da lì).
+- Da lì in poi si aggiorna mese per mese con gli export di Trade Republic e BPER.
 
 ## Categorizzazione
 
@@ -73,6 +94,6 @@ Per i test si usano solo file anonimizzati in `tests/fixtures/`.
 | 1 · Import e regole | Parser Trade Republic e BPER, dedup, motore di regole, coda di revisione |
 | 2 · Dashboard cashflow | Entrate/uscite, savings rate, budget, categorie |
 | 3 · Patrimonio | Trade dal CSV, prezzi yfinance, snapshot mensili, XIRR |
-| 4 · Storico e Raspberry | Migrazione dai fogli Google, web app sul Raspberry Pi |
+| 4 · Storico e Raspberry | Migrazione dai fogli Google ✅, web app sul Raspberry Pi |
 | 5 · App nativa | APK Android con database sul telefono |
 | 6 · Assistente | Chat con LLM locale (Ollama) sui propri dati |
