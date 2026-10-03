@@ -49,6 +49,7 @@ class ImportView(ft.Column):
         super().__init__(spacing=16, expand=True)
         self.engine = engine
         self.on_imported = on_imported
+        self.picker: ft.FilePicker | None = None
         with session(engine) as s:
             accounts = s.exec(select(Account).where(Account.source != AccountSource.MANUALE)).all()
             self.accounts = {str(a.id): (a.name, a.source) for a in accounts}
@@ -74,14 +75,26 @@ class ImportView(ft.Column):
 
     async def _pick(self, e: ft.Event[ft.FilledButton]) -> None:
         if not self.account.value:
+            _toast(self, "Scegli prima il conto", error=True)
             return
         name, source = self.accounts[self.account.value]
-        files = await ft.FilePicker().pick_files(
-            dialog_title=f"Export {name}",
-            file_type=ft.FilePickerFileType.CUSTOM,
-            allowed_extensions=EXTENSIONS[source],
-            with_data=True,  # necessario su web e Android, dove non c'è un percorso locale
-        )
+        page = _page(self)
+        if page is None:
+            return
+        if self.picker is None:  # è un servizio: va registrato sulla pagina prima dell'uso
+            self.picker = ft.FilePicker()
+            page.services.append(self.picker)
+            page.update()  # senza update il client non conosce il servizio e la chiamata resta muta
+        try:
+            files = await self.picker.pick_files(
+                dialog_title=f"Export {name}",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=EXTENSIONS[source],
+                with_data=True,  # necessario su web e Android, dove non c'è un percorso locale
+            )
+        except Exception as exc:  # noqa: BLE001  (l'errore va mostrato, non perso nel log)
+            _toast(self, f"Selezione file non riuscita: {exc}", error=True)
+            return
         if not files:
             return
         f = files[0]
