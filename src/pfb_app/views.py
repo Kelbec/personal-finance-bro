@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import tempfile
 from collections.abc import Callable
+from decimal import Decimal
 from pathlib import Path
 
 import flet as ft
@@ -15,6 +16,15 @@ from pfb_core.db import session
 from pfb_core.importer import ImportFailed, import_file
 from pfb_core.metrics import MonthSummary, available_months, month_summary, monthly_trend
 from pfb_core.models import Account, AccountSource, Category, CategoryGroup, Transaction
+from pfb_core.portfolio import (
+    MonthWorth,
+    PortfolioSummary,
+    build_all_snapshots,
+    net_worth_series,
+    portfolio_summary,
+    set_balance,
+)
+from pfb_core.prices import fetch_prices
 from pfb_core.rules import mark_internal, pending_review, set_category
 
 EXTENSIONS = {AccountSource.CSV_TR: ["csv"], AccountSource.XLS_BPER: ["xls"]}
@@ -324,3 +334,170 @@ class DashboardView(ft.Column):
                 ),
             ],
         )
+
+
+ASSET_LABELS = {"stock": "Azioni", "bond": "Obbligazioni", "commodity": "Materie prime",
+                "cash": "Liquidità"}  # fmt: skip
+
+
+def _tile(label: str, value: str) -> ft.Control:
+    return ft.Card(
+        content=ft.Container(
+            padding=12,
+            content=ft.Column(
+                spacing=2,
+                controls=[
+                    ft.Text(label, size=12),
+                    ft.Text(value, size=18, weight=ft.FontWeight.BOLD),
+                ],  # fmt: skip
+            ),
+        )
+    )
+
+
+class PortfolioView(ft.Column):
+    """Patrimonio: valore, P&L, XIRR, allocazione, posizioni, storico, saldi manuali."""
+
+    def __init__(self, engine: Engine):
+        super().__init__(spacing=12, expand=True, scroll=ft.ScrollMode.AUTO)
+        self.engine = engine
+        self.kpis = ft.Row(wrap=True, spacing=12)
+        self.allocation = ft.Column(spacing=6)
+        self.positions = ft.Column(spacing=4)
+        self.history = ft.Column(spacing=2)
+        self.warnings = ft.Column(spacing=2)
+        with session(engine) as s:
+            accounts = s.exec(select(Account)).all()
+        self.balance_account = ft.Dropdown(
+            label="Conto",
+            width=200,
+            options=[ft.dropdown.Option(key=str(a.id), text=a.name) for a in accounts],
+        )
+        self.balance_date = ft.TextField(label="Fine mese (AAAA-MM-GG)", width=190,
+                                         value=f"{dt.date.today():%Y-%m-%d}")  # fmt: skip
+        self.balance_value = ft.TextField(label="Saldo €", width=120)
+        self.controls = [
+            ft.Row(
+                [
+                    ft.Text("Patrimonio", size=22, weight=ft.FontWeight.BOLD, expand=True),
+                    ft.FilledButton(
+                        "Aggiorna prezzi", icon=ft.Icons.REFRESH, on_click=self._on_update
+                    ),  # fmt: skip
+                ]
+            ),
+            self.kpis,
+            self.warnings,
+            ft.Text("Allocazione", size=16, weight=ft.FontWeight.W_600),
+            self.allocation,
+            ft.Text("Posizioni", size=16, weight=ft.FontWeight.W_600),
+            self.positions,
+            ft.Text("Andamento mensile", size=16, weight=ft.FontWeight.W_600),
+            self.history,
+            ft.Text(
+                "Saldo manuale (PayPal, Satispay, saldo di partenza)",
+                size=16,
+                weight=ft.FontWeight.W_600,
+            ),  # fmt: skip
+            ft.Row(
+                [
+                    self.balance_account,
+                    self.balance_date,
+                    self.balance_value,
+                    ft.OutlinedButton("Salva", on_click=self._on_balance),
+                ],  # fmt: skip
+                wrap=True,
+            ),
+        ]
+        self.refresh(update=False)
+
+    def refresh(self, update: bool = True) -> None:
+        with session(self.engine) as s:
+            p = portfolio_summary(s)
+            series = net_worth_series(s)[-12:]
+        self._show(p, series)
+        if update:
+            _refresh(self)
+
+    def _show(self, p: PortfolioSummary, series: list[MonthWorth]) -> None:
+        if p.xirr is not None and p.annualized:
+            rate_label, rate = "Rendimento annuo (XIRR)", f"{p.xirr:.1%}"
+        elif p.period_return is not None:
+            rate_label = f"Rendimento dal {p.xirr_since:%m/%Y}"
+            rate = f"{p.period_return:+.1%}"
+        else:
+            rate_label, rate = "Rendimento", "—"
+        self.kpis.controls = [
+            _tile("Patrimonio netto", _eur(p.net_worth)),
+            _tile("Titoli", _eur(p.securities)),
+            _tile("Liquidità", _eur(p.total_cash)),
+            _tile("Costo di carico", _eur(p.invested)),
+            _tile("Guadagno/perdita", _eur(p.pnl)),
+            _tile(rate_label, rate),
+        ]
+        self.allocation.controls = [
+            ft.Column(
+                spacing=2,
+                controls=[
+                    ft.Text(f"{ASSET_LABELS.get(k, k)}  {v:.1%}"),
+                    ft.ProgressBar(value=float(v)),
+                ],  # fmt: skip
+            )
+            for k, v in sorted(p.allocation.items(), key=lambda kv: -kv[1])
+        ] or [ft.Text("Nessun dato: inserisci le posizioni di partenza e un saldo.")]
+        rows = []
+        for pos in p.positions:
+            pnl = f"{pos.pnl_pct:+.1%}" if pos.pnl_pct is not None else ""
+            color = None
+            if pos.pnl is not None:
+                color = ft.Colors.GREEN if pos.pnl >= 0 else ft.Colors.ERROR
+            value = _eur(pos.value) if pos.value is not None else "senza prezzo"
+            rows.append(
+                ft.Row(
+                    [
+                        ft.Text(pos.instrument.ticker, width=70, weight=ft.FontWeight.W_600),
+                        ft.Text(f"{pos.shares:.4f} q.", width=110),
+                        ft.Text(value, width=120),
+                        ft.Text(pnl, color=color),
+                    ]
+                )
+            )
+        for name, value in p.cash.items():
+            rows.append(ft.Row([ft.Text(name, width=180), ft.Text(_eur(value))]))
+        self.positions.controls = rows
+        self.history.controls = [
+            ft.Row(
+                [
+                    ft.Text(f"{m.month:%m/%Y}", width=70),
+                    ft.Text(_eur(m.total), width=130),
+                    ft.Text(f"liquidità {_eur(m.by_class.get('cash', 0))}", size=12),
+                ]
+            )  # fmt: skip
+            for m in reversed(series)
+        ]
+
+    def _on_update(self, e) -> None:
+        with session(self.engine) as s:
+            r = fetch_prices(s)
+            warnings = build_all_snapshots(s)
+        msgs = [f"Manca il simbolo Yahoo per {t}" for t in r.missing_symbol]
+        msgs += [f"{t}: {err[:80]}" for t, err in r.errors.items()]
+        msgs += warnings[-5:]
+        self.warnings.controls = [ft.Text(m, size=12, color=ft.Colors.ERROR) for m in msgs]
+        _toast(self, f"Prezzi nuovi: {sum(r.saved.values())}")
+        self.refresh()
+
+    def _on_balance(self, e) -> None:
+        try:
+            day = dt.date.fromisoformat(self.balance_date.value or "")
+            value = Decimal((self.balance_value.value or "").replace(",", "."))
+        except (ValueError, ArithmeticError):
+            _toast(self, "Data o importo non validi", error=True)
+            return
+        if not self.balance_account.value:
+            _toast(self, "Scegli un conto", error=True)
+            return
+        with session(self.engine) as s:
+            set_balance(s, s.get(Account, int(self.balance_account.value)), day, value)
+            build_all_snapshots(s)
+        _toast(self, "Saldo salvato")
+        self.refresh()

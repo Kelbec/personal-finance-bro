@@ -60,15 +60,16 @@ CATEGORIES: list[tuple[str, str, CategoryGroup]] = [
     ("🔴", "Uscita extra fuori budget", G.EXTRA),
 ]
 
-# (isin, ticker, nome, asset class) — dal foglio Asset allocation → ISIN_mapping
-INSTRUMENTS: list[tuple[str, str, str, AssetClass]] = [
-    ("IE00B4WXJJ64", "EUNH", "iShares Core Euro Government Bond", AssetClass.BOND),
-    ("IE00BK5BQT80", "VWCE", "Vanguard FTSE All-World (Acc)", AssetClass.STOCK),
-    ("IE00BKM4GZ66", "EIMI", "iShares Core MSCI EM IMI (Acc)", AssetClass.STOCK),
-    ("LU0908500753", "MEUD", "Amundi Core Stoxx Europe 600", AssetClass.STOCK),
-    ("IE00B5BMR087", "CSSPX", "iShares Core S&P 500 (Acc)", AssetClass.STOCK),
-    ("US0231351067", "AMZ", "Amazon.com", AssetClass.STOCK),
-    ("JE00BQRFDY49", "WSLV", "WisdomTree Silver 3x Daily Leveraged", AssetClass.COMMODITY),
+# (isin, ticker, nome, asset class, simbolo Yahoo) — dal foglio Asset allocation → ISIN_mapping.
+# Simboli Yahoo in EUR; quelli dubbi restano None e si impostano da config.toml ([[instruments]]).
+INSTRUMENTS: list[tuple[str, str, str, AssetClass, str | None]] = [
+    ("IE00B4WXJJ64", "EUNH", "iShares Core Euro Government Bond", AssetClass.BOND, "EUNH.DE"),
+    ("IE00BK5BQT80", "VWCE", "Vanguard FTSE All-World (Acc)", AssetClass.STOCK, "VWCE.DE"),
+    ("IE00BKM4GZ66", "EIMI", "iShares Core MSCI EM IMI (Acc)", AssetClass.STOCK, "IS3N.DE"),
+    ("LU0908500753", "MEUD", "Amundi Core Stoxx Europe 600", AssetClass.STOCK, "MEUD.PA"),
+    ("IE00B5BMR087", "CSSPX", "iShares Core S&P 500 (Acc)", AssetClass.STOCK, "SXR8.DE"),
+    ("US0231351067", "AMZ", "Amazon.com", AssetClass.STOCK, "AMZ.DE"),
+    ("JE00BQRFDY49", "WSLV", "WisdomTree Silver 3x Daily Leveraged", AssetClass.COMMODITY, None),
 ]
 
 
@@ -80,14 +81,18 @@ def seed_categories(s: Session) -> int:
 
 
 def seed_instruments(s: Session) -> int:
-    existing = set(s.exec(select(Instrument.isin)).all())
-    new = [
-        Instrument(isin=i, ticker=t, name=n, asset_class=c)
-        for i, t, n, c in INSTRUMENTS
-        if i not in existing
-    ]
-    s.add_all(new)
-    return len(new)
+    existing = {i.isin: i for i in s.exec(select(Instrument)).all()}
+    n = 0
+    for isin, ticker, name, cls, yahoo in INSTRUMENTS:
+        inst = existing.get(isin)
+        if inst is None:
+            s.add(Instrument(isin=isin, ticker=ticker, name=name, asset_class=cls,
+                             yahoo_symbol=yahoo))  # fmt: skip
+            n += 1
+        elif inst.yahoo_symbol is None and yahoo:  # strumento creato dall'import, senza simbolo
+            inst.yahoo_symbol = yahoo
+            s.add(inst)
+    return n
 
 
 def seed_from_config(s: Session, config_path: str | Path) -> int:
@@ -120,6 +125,20 @@ def seed_from_config(s: Session, config_path: str | Path) -> int:
         if a.get("iban"):
             upsert_rule(s, RuleField.IBAN, a["iban"], is_internal=True,
                         priority=PRIO_INTERNAL, origin=RuleOrigin.CONFIG)  # fmt: skip
+
+    # strumenti: simbolo Yahoo, asset class o strumenti nuovi
+    for i in cfg.get("instruments", []):
+        inst = s.get(Instrument, i["isin"])
+        if inst is None:
+            inst = Instrument(isin=i["isin"], ticker=i.get("ticker", i["isin"]),
+                              name=i.get("name", i["isin"]),
+                              asset_class=AssetClass(i.get("asset_class", "stock")))  # fmt: skip
+        for key in ("ticker", "name", "yahoo_symbol"):
+            if key in i:
+                setattr(inst, key, i[key])
+        if "asset_class" in i:
+            inst.asset_class = AssetClass(i["asset_class"])
+        s.add(inst)
 
     # regole personali
     for r in cfg.get("rules", []):

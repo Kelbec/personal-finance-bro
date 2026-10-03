@@ -4,11 +4,18 @@ python -m pfb_core init                         crea il database e i dati inizia
 python -m pfb_core import "Trade Republic" file.csv
 python -m pfb_core import BPER Lista_Movimenti.xls
 python -m pfb_core review                       movimenti da categorizzare
+python -m pfb_core position "Trade Republic" IE00BK5BQT80 120.5 98.40 --data 2026-08-31
+python -m pfb_core balance "Trade Republic" 2026-08-31 1250.00
+python -m pfb_core prices                       scarica i prezzi (uv sync --extra prices)
+python -m pfb_core snapshot                     ricalcola gli snapshot di fine mese
+python -m pfb_core portfolio                    riepilogo del patrimonio
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
+from decimal import Decimal
 from pathlib import Path
 
 from sqlmodel import select
@@ -16,6 +23,13 @@ from sqlmodel import select
 from pfb_core.db import get_engine, init_db, session
 from pfb_core.importer import ImportFailed, import_file
 from pfb_core.models import Account
+from pfb_core.portfolio import (
+    add_initial_position,
+    build_all_snapshots,
+    portfolio_summary,
+    set_balance,
+)
+from pfb_core.prices import fetch_prices
 from pfb_core.rules import pending_review
 from pfb_core.seed import seed_all
 
@@ -63,6 +77,72 @@ def _cmd_review(args) -> None:
         print(f"\n{len(pending)} movimenti da rivedere")
 
 
+def _account(s, name: str) -> Account:
+    account = s.exec(select(Account).where(Account.name == name)).first()
+    if account is None:
+        names = ", ".join(s.exec(select(Account.name)).all())
+        raise SystemExit(f"Conto {name!r} non trovato. Conti disponibili: {names}")
+    return account
+
+
+def _date(text: str | None) -> dt.date:
+    return dt.date.fromisoformat(text) if text else dt.date.today()
+
+
+def _cmd_position(args) -> None:
+    with session(get_engine(args.db)) as s:
+        t = add_initial_position(s, _account(s, args.account), args.isin, Decimal(args.shares),
+                                 Decimal(args.avg_cost), _date(args.data))  # fmt: skip
+        print(f"Posizione di partenza: {t.shares} quote di {args.isin} al {t.date}")
+
+
+def _cmd_balance(args) -> None:
+    with session(get_engine(args.db)) as s:
+        snap = set_balance(s, _account(s, args.account), _date(args.data), Decimal(args.value))
+        print(f"Saldo {args.account} al {snap.month}: {snap.value} €")
+
+
+def _cmd_prices(args) -> None:
+    with session(get_engine(args.db)) as s:
+        r = fetch_prices(s, start=_date(args.da) if args.da else None)
+    for ticker, n in r.saved.items():
+        print(f"{ticker}: {n} prezzi nuovi")
+    for ticker in r.missing_symbol:
+        print(f"{ticker}: manca il simbolo Yahoo (config.toml → [[instruments]])")
+    for ticker, err in r.errors.items():
+        print(f"{ticker}: errore — {err}")
+
+
+def _cmd_snapshot(args) -> None:
+    with session(get_engine(args.db)) as s:
+        warnings = build_all_snapshots(s, _date(args.fino))
+    for w in warnings:
+        print(f"  ! {w}")
+    print("Snapshot aggiornati")
+
+
+def _cmd_portfolio(args) -> None:
+    with session(get_engine(args.db)) as s:
+        p = portfolio_summary(s, _date(args.data))
+    print(f"Patrimonio al {p.day}: {p.net_worth:,.2f} €")
+    print(f"  titoli {p.securities:,.2f} €  ·  liquidità {p.total_cash:,.2f} €")
+    print(f"  costo di carico {p.invested:,.2f} €  ·  P&L {p.pnl:+,.2f} €")
+    if p.xirr is not None and p.annualized:
+        print(f"  rendimento annuo (XIRR) dal {p.xirr_since}: {p.xirr:.2%}")
+    elif p.period_return is not None:
+        print(f"  rendimento dal {p.xirr_since} (non annualizzato): {p.period_return:+.2%}")
+    print()
+    for pos in p.positions:
+        value = f"{pos.value:>11,.2f} €" if pos.value is not None else "  senza prezzo"
+        pnl = f"{pos.pnl_pct:+.1%}" if pos.pnl_pct is not None else ""
+        print(f"  {pos.instrument.ticker:<6} {pos.shares:>12.4f}  {value}  {pnl}")
+    for name, value in p.cash.items():
+        print(f"  {name:<20} {value:>11,.2f} €")
+    print()
+    for k, v in sorted(p.allocation.items(), key=lambda kv: -kv[1]):
+        print(f"  {k:<10} {v:.1%}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="pfb_core")
     parser.add_argument("--db", default="data/pfb.sqlite")
@@ -79,6 +159,32 @@ def main() -> None:
 
     p_rev = sub.add_parser("review", help="elenca i movimenti da categorizzare")
     p_rev.set_defaults(func=_cmd_review)
+
+    p_pos = sub.add_parser("position", help="posizione di partenza su uno strumento")
+    p_pos.add_argument("account")
+    p_pos.add_argument("isin")
+    p_pos.add_argument("shares", help="quote possedute")
+    p_pos.add_argument("avg_cost", help="prezzo medio di carico")
+    p_pos.add_argument("--data", help="data della posizione (YYYY-MM-DD), default oggi")
+    p_pos.set_defaults(func=_cmd_position)
+
+    p_bal = sub.add_parser("balance", help="saldo di un conto a una data (ancora)")
+    p_bal.add_argument("account")
+    p_bal.add_argument("data", help="YYYY-MM-DD; vale come saldo di fine mese")
+    p_bal.add_argument("value")
+    p_bal.set_defaults(func=_cmd_balance)
+
+    p_pr = sub.add_parser("prices", help="scarica i prezzi mancanti da Yahoo Finance")
+    p_pr.add_argument("--da", help="scarica dal giorno indicato (YYYY-MM-DD)")
+    p_pr.set_defaults(func=_cmd_prices)
+
+    p_sn = sub.add_parser("snapshot", help="ricalcola gli snapshot di fine mese")
+    p_sn.add_argument("--fino", help="ultimo giorno da considerare, default oggi")
+    p_sn.set_defaults(func=_cmd_snapshot)
+
+    p_pf = sub.add_parser("portfolio", help="riepilogo del patrimonio")
+    p_pf.add_argument("--data", help="data di riferimento, default oggi")
+    p_pf.set_defaults(func=_cmd_portfolio)
 
     args = parser.parse_args()
     args.func(args)

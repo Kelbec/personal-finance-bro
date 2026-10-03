@@ -32,6 +32,26 @@ uv run --extra web flet run --web src/main.py      # web, es. sul Raspberry Pi
 uv run --extra app flet build apk                  # APK Android
 ```
 
+## Patrimonio
+
+```bash
+uv sync --extra prices                                   # yfinance, per i prezzi
+# una tantum: quote già possedute prima del primo export, e saldi di partenza
+uv run python -m pfb_core position "Trade Republic" IE00BK5BQT80 120.5 98.40 --data 2026-08-31
+uv run python -m pfb_core balance "Trade Republic" 2026-08-31 1250.00
+uv run python -m pfb_core balance PayPal 2026-09-30 12.00
+# ogni mese, dopo l'import
+uv run python -m pfb_core prices        # chiusure giornaliere da Yahoo Finance
+uv run python -m pfb_core snapshot      # valori di fine mese
+uv run python -m pfb_core portfolio     # patrimonio, P&L, rendimento, allocazione
+```
+
+Quote = trade importati + posizioni di partenza; valore = quote × ultima chiusura.
+La liquidità di ogni conto parte dall'ultimo saldo noto (inserito a mano o letto dall'export
+BPER) più i movimenti successivi. Il rendimento è un XIRR calcolato dal primo mese con
+prezzi disponibili; sotto l'anno viene mostrato cumulato, non annualizzato.
+I simboli Yahoo si correggono in `config.toml` (`[[instruments]]`).
+
 ## Categorizzazione
 
 Ogni movimento importato passa per un motore di regole (`src/pfb_core/rules.py`), valutate in ordine

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import flet as ft
 
-from pfb_app.views import DashboardView, ImportView, ReviewView
+from pfb_app.views import DashboardView, ImportView, PortfolioView, ReviewView
 from pfb_core.db import get_engine, init_db, session
 from pfb_core.seed import seed_all
 
@@ -32,9 +32,12 @@ def main(page: ft.Page) -> None:
         seed_all(s, CONFIG_PATH if CONFIG_PATH.exists() else None)
 
     dashboard = DashboardView(engine)
+    portfolio = PortfolioView(engine)
     review = ReviewView(engine)
-    imports = ImportView(engine, on_imported=lambda: (review.refresh(), dashboard.refresh()))
-    views: list[ft.Control] = [dashboard, imports, review]
+    imports = ImportView(
+        engine, on_imported=lambda: (review.refresh(), dashboard.refresh(), portfolio.refresh())
+    )
+    views: list[ft.Control] = [dashboard, portfolio, imports, review]
     body = ft.Container(content=views[0], expand=True, padding=16)
 
     def on_nav(e: ft.Event[ft.NavigationBar]) -> None:
@@ -42,13 +45,16 @@ def main(page: ft.Page) -> None:
         body.content = views[idx]
         if idx == 0:
             dashboard.refresh()
-        elif idx == 2:
+        elif idx == 1:
+            portfolio.refresh()
+        elif idx == 3:
             review.refresh()
         page.update()
 
     page.navigation_bar = ft.NavigationBar(
         destinations=[
             ft.NavigationBarDestination(icon=ft.Icons.INSIGHTS, label="Cashflow"),
+            ft.NavigationBarDestination(icon=ft.Icons.ACCOUNT_BALANCE, label="Patrimonio"),
             ft.NavigationBarDestination(icon=ft.Icons.UPLOAD_FILE, label="Import"),
             ft.NavigationBarDestination(icon=ft.Icons.RULE, label="Da rivedere"),
         ],
