@@ -69,7 +69,7 @@ INSTRUMENTS: list[tuple[str, str, str, AssetClass, str | None]] = [
     ("LU0908500753", "MEUD", "Amundi Core Stoxx Europe 600", AssetClass.STOCK, "MEUD.PA"),
     ("IE00B5BMR087", "CSSPX", "iShares Core S&P 500 (Acc)", AssetClass.STOCK, "SXR8.DE"),
     ("US0231351067", "AMZ", "Amazon.com", AssetClass.STOCK, "AMZ.DE"),
-    ("JE00BQRFDY49", "WSLV", "WisdomTree Silver 3x Daily Leveraged", AssetClass.COMMODITY, None),
+    ("JE00BQRFDY49", "WSLV", "WisdomTree Core Physical Silver", AssetClass.COMMODITY, "WSLV.MI"),
 ]
 
 
