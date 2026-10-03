@@ -21,7 +21,9 @@ Dati solo in locale: SQLite, niente cloud. Lingua del progetto: italiano (UI, co
 - Mai committare dati personali: export, `*.sqlite`, `config.toml`, IBAN, nomi, codice fiscale.
   Le fixture in `tests/fixtures/` vanno anonimizzate.
 - Un branch per fase (`fase-N-...`) con PR verso `main`; CI = ruff + pytest.
-- Flet ≥ 1.0: `ft.run(main)`, `await ft.FilePicker().pick_files(...)`, `page.show_dialog(ft.SnackBar(...))`.
+- Flet ≥ 1.0: `ft.run(main)`, `page.show_dialog(ft.SnackBar(...))`. `FilePicker` è un servizio:
+  `page.services.append(picker)` + `page.update()` prima di `await picker.pick_files(...)`,
+  altrimenti il pulsante non fa nulla.
 
 ## Roadmap
 0 setup ✅ · 1 import e regole ✅ · 2 dashboard cashflow ✅ · 3 patrimonio ✅ (branch `fase-3-patrimonio`:
