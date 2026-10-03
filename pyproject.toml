@@ -15,6 +15,7 @@ dependencies = [
 app = ["flet>=1.0"]
 web = ["flet>=1.0", "flet-web>=1.0"]  # modalità web sul Raspberry Pi
 prices = ["yfinance>=0.2"]
+sheets = ["gspread>=6"]  # sincronizzazione col foglio Google condiviso
 assistant = ["ollama>=0.4"]
 
 [dependency-groups]

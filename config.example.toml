@@ -59,3 +59,13 @@ internal = true
 # [[instruments]]
 # isin = "JE00BQRFDY49"
 # yahoo_symbol = "WSLV.MI"
+
+# Sincronizzazione (facoltativa) verso il foglio Google condiviso: tasto "Sincronizza Google
+# Sheet" nella schermata Aggiungi, oppure `python -m pfb_core sync-sheet`. Senza questa
+# sezione nessun dato lascia il computer. Vedi README → "Foglio Google condiviso".
+# [google_sheet]
+# foglio = "https://docs.google.com/spreadsheets/d/..."   # URL o ID
+# credenziali = "google-credentials.json"   # chiave dell'account di servizio (fuori da git)
+# dal = "2026-05-01"                         # invia i movimenti da questa data in poi
+# [google_sheet.schede]                      # intestatario -> scheda in cui scrivere
+# Marco = "CashFlowMarco2025"

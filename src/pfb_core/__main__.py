@@ -11,6 +11,7 @@ python -m pfb_core snapshot                     ricalcola gli snapshot di fine m
 python -m pfb_core portfolio                    riepilogo del patrimonio
 python -m pfb_core storico-cashflow CashFlow.xlsx           movimenti dai fogli Google
 python -m pfb_core storico-patrimonio Asset_allocation.xlsx snapshot mensili e posizioni
+python -m pfb_core sync-sheet [--prova]        invia i movimenti al foglio Google condiviso
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from pfb_core.portfolio import (
 from pfb_core.prices import fetch_prices
 from pfb_core.rules import pending_review
 from pfb_core.seed import seed_all
+from pfb_core.sheets_sync import GspreadClient, load_sheet_config, plan_sync, run_sync
 
 
 def _cmd_init(args) -> None:
@@ -195,6 +197,31 @@ def _cmd_history_portfolio(args) -> None:
             print(f"  ! {ticker}: nessun prezzo al {start}, posizione non creata")
 
 
+def _cmd_sync_sheet(args) -> None:
+    cfg = load_sheet_config(args.config)
+    if cfg is None:
+        raise SystemExit("Sincronizzazione non configurata: aggiungi [google_sheet] a config.toml")
+    engine = get_engine(args.db)
+    init_db(engine)
+    with session(engine) as s:
+        plan = plan_sync(s, cfg)
+        for owner, n in plan.no_tab.items():
+            print(f"  ! {owner}: {n} movimenti senza scheda in [google_sheet.schede]")
+        if not plan.rows:
+            print("Niente da inviare: il foglio è aggiornato")
+            return
+        print(f"{len(plan.rows)} movimenti dal {plan.first} al {plan.last}")
+        if args.prova:
+            for r in plan.rows:
+                print(f"  {r.tab}: " + " | ".join(str(v) for v in r.values))
+            print("Prova: nessuna riga scritta")
+            return
+        result = run_sync(s, plan, GspreadClient(cfg))
+    for tab, n in result.written.items():
+        print(f"  {tab}: {n} righe scritte")
+    print(f"  già presenti nel foglio: {result.already_there}")
+
+
 def main() -> None:
     for stream in (sys.stdout, sys.stderr):  # € e accenti nel terminale di Windows
         if hasattr(stream, "reconfigure"):
@@ -262,6 +289,11 @@ def main() -> None:
         help="importa solo lo storico, senza creare le posizioni di partenza",
     )
     p_hp.set_defaults(func=_cmd_history_portfolio)
+
+    p_sync = sub.add_parser("sync-sheet", help="invia i movimenti al foglio Google condiviso")
+    p_sync.add_argument("--config", default="config.toml")
+    p_sync.add_argument("--prova", action="store_true", help="mostra le righe senza scriverle")
+    p_sync.set_defaults(func=_cmd_sync_sheet)
 
     args = parser.parse_args()
     args.func(args)

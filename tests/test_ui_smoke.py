@@ -118,3 +118,41 @@ def test_paths_point_to_project_even_with_flet_run_cwd(tmp_path, monkeypatch):
     root = Path(__file__).resolve().parent.parent
     assert Path(main.DB_PATH) == root / "data" / "pfb.sqlite"
     assert root / "config.toml" == main.CONFIG_PATH
+
+
+def test_add_view_saves_and_syncs(engine, s, bper_account, tmp_path):
+    from pfb_app.views import AddView
+    from pfb_core.models import Account, AccountKind, AccountSource, SheetSync
+    from tests.test_sheets_sync import TAB, FakeSheet
+
+    s.add(Account(owner_id=bper_account.owner_id, name="Contanti", kind=AccountKind.WALLET,
+                  source=AccountSource.MANUALE))  # fmt: skip
+    s.commit()
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(f'[google_sheet]\nfoglio = "id"\ndal = "2026-01-01"\n'
+                   f'[google_sheet.schede]\nTest = "{TAB}"\n', encoding="utf-8")  # fmt: skip
+
+    view = AddView(engine, cfg)
+    assert [o.text for o in view.account.options] == ["Contanti"]
+    view.date.value = "2026-09-12"
+    view.amount.value = "12,40"
+    view.category.value = next(o.key for o in view.category.options if "Ristorante" in o.text)
+    view.description.value = "Pizza"
+    view._on_save(None)
+    assert view.amount.value == ""
+
+    view._on_sync(None)  # prepara il piano (il dialogo di conferma richiede una pagina)
+    assert view._plan is not None and len(view._plan.rows) == 1
+    sheet = FakeSheet()
+    asyncio.run(view.sync_now(client=sheet))
+    assert "Scritti 1" in view.sync_status.value
+    assert sheet.appended[0][1][0][:4] == ["Pizza", "🍔 Ristorante/Asporto", 12.4, "2026-09-12"]
+    assert len(s.exec(select(SheetSync)).all()) == 1
+
+
+def test_sync_without_config_does_nothing(engine, tmp_path):
+    from pfb_app.views import AddView
+
+    view = AddView(engine, tmp_path / "config.toml")
+    view._on_sync(None)
+    assert view._plan is None
