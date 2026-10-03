@@ -16,7 +16,7 @@ from pathlib import Path
 
 import flet as ft
 
-from pfb_app.views import DashboardView, ImportView, PortfolioView, ReviewView
+from pfb_app.views import AddView, DashboardView, ImportView, PortfolioView, ReviewView
 from pfb_core.db import get_engine, init_db, session
 from pfb_core.seed import seed_all
 
@@ -51,7 +51,8 @@ def main(page: ft.Page) -> None:
     imports = ImportView(
         engine, on_imported=lambda: (review.refresh(), dashboard.refresh(), portfolio.refresh())
     )
-    views: list[ft.Control] = [dashboard, portfolio, imports, review]
+    add = AddView(engine, CONFIG_PATH, on_added=dashboard.refresh)
+    views: list[ft.Control] = [dashboard, portfolio, imports, add, review]
     body = ft.Container(content=views[0], expand=True, padding=16)
 
     def on_nav(e: ft.Event[ft.NavigationBar]) -> None:
@@ -61,7 +62,7 @@ def main(page: ft.Page) -> None:
             dashboard.refresh()
         elif idx == 1:
             portfolio.refresh()
-        elif idx == 3:
+        elif idx == 4:
             review.refresh()
         page.update()
 
@@ -70,6 +71,7 @@ def main(page: ft.Page) -> None:
             ft.NavigationBarDestination(icon=ft.Icons.INSIGHTS, label="Cashflow"),
             ft.NavigationBarDestination(icon=ft.Icons.ACCOUNT_BALANCE, label="Patrimonio"),
             ft.NavigationBarDestination(icon=ft.Icons.UPLOAD_FILE, label="Import"),
+            ft.NavigationBarDestination(icon=ft.Icons.ADD_CARD, label="Aggiungi"),
             ft.NavigationBarDestination(icon=ft.Icons.RULE, label="Da rivedere"),
         ],
         on_change=on_nav,

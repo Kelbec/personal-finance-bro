@@ -73,6 +73,35 @@ uv run python -m pfb_core storico-patrimonio Asset_allocation.xlsx
   Yahoo del giorno, costo di carico = quella chiusura (il P&L parte da lì).
 - Da lì in poi si aggiorna mese per mese con gli export di Trade Republic e BPER.
 
+## Foglio Google condiviso
+
+Facoltativo: l'app può aggiungere i movimenti al foglio Google che si usa già in coppia
+(solo app → foglio). Si attiva con la sezione `[google_sheet]` di `config.toml`; senza,
+nessun dato lascia il computer.
+
+1. [Google Cloud Console](https://console.cloud.google.com/): nuovo progetto → abilita
+   **Google Sheets API** → *Credenziali* → *Account di servizio* → *Chiavi* → *JSON*.
+2. Salva la chiave come `google-credentials.json` nella cartella del progetto (è in `.gitignore`).
+3. Condividi il foglio con l'email dell'account di servizio (`...@...iam.gserviceaccount.com`)
+   come **Editor**.
+4. Compila `[google_sheet]` in `config.toml` (vedi `config.example.toml`) e installa
+   `uv sync --extra sheets`.
+
+```bash
+uv run python -m pfb_core sync-sheet --prova   # mostra cosa verrebbe scritto
+uv run python -m pfb_core sync-sheet           # scrive
+```
+
+Nell'app: schermata **Aggiungi** → *Sincronizza Google Sheet*, con conferma prima dell'invio.
+Vanno sul foglio i movimenti categorizzati dalla data `dal` in poi (giroconti e storico
+esclusi), ognuno una volta sola, nel formato Causale | Categoria | Importo | Data | Mese |
+Intestatario. Un movimento già presente nella scheda (stessa data, importo e categoria),
+ad esempio perché scritto anche a mano, non viene riscritto. Una categoria cambiata dopo
+l'invio non viene aggiornata sul foglio.
+
+Nella stessa schermata si inseriscono a mano le spese dei conti senza export (contanti,
+PayPal, Satispay); quelle bancarie arrivano dall'import, per non contarle due volte.
+
 ## Categorizzazione
 
 Ogni movimento importato passa per un motore di regole (`src/pfb_core/rules.py`), valutate in ordine

@@ -174,3 +174,12 @@ class Snapshot(SQLModel, table=True):
     price: Decimal | None = Field(default=None, max_digits=14, decimal_places=6)
     value: Decimal = Field(max_digits=14, decimal_places=2)
     is_manual: bool = False  # valore fornito (a mano o dall'export), non ricalcolato
+
+
+class SheetSync(SQLModel, table=True):
+    """Movimento già scritto sul foglio Google condiviso: non va reinviato."""
+
+    transaction_id: int = Field(foreign_key="transaction.id", primary_key=True)
+    tab: str
+    synced_at: dt.datetime = Field(default_factory=lambda: dt.datetime.now(dt.UTC))
+    skipped: bool = False  # già presente nel foglio (stessa data, importo, categoria)

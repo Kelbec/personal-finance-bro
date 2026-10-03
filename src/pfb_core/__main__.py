@@ -11,6 +11,7 @@ python -m pfb_core snapshot                     ricalcola gli snapshot di fine m
 python -m pfb_core portfolio                    riepilogo del patrimonio
 python -m pfb_core storico-cashflow CashFlow.xlsx           movimenti dai fogli Google
 python -m pfb_core storico-patrimonio Asset_allocation.xlsx snapshot mensili e posizioni
+python -m pfb_core sync-sheet [--prova]        invia i movimenti al foglio Google condiviso
 """
 
 from __future__ import annotations
@@ -41,6 +42,13 @@ from pfb_core.portfolio import (
 from pfb_core.prices import fetch_prices
 from pfb_core.rules import pending_review
 from pfb_core.seed import seed_all
+from pfb_core.sheets_sync import (
+    GspreadClient,
+    SheetLayoutError,
+    load_sheet_config,
+    plan_sync,
+    run_sync,
+)
 
 
 def _cmd_init(args) -> None:
@@ -195,6 +203,41 @@ def _cmd_history_portfolio(args) -> None:
             print(f"  ! {ticker}: nessun prezzo al {start}, posizione non creata")
 
 
+def _cmd_sync_sheet(args) -> None:
+    cfg = load_sheet_config(args.config)
+    if cfg is None:
+        raise SystemExit("Sincronizzazione non configurata: aggiungi [google_sheet] a config.toml")
+    engine = get_engine(args.db)
+    init_db(engine)
+    with session(engine) as s:
+        plan = plan_sync(s, cfg)
+        for owner, n in plan.no_tab.items():
+            print(f"  ! {owner}: {n} movimenti senza scheda in [google_sheet.schede]")
+        if not plan.rows:
+            print("Niente da inviare: il foglio è aggiornato")
+            return
+        print(f"{len(plan.rows)} movimenti dal {plan.first} al {plan.last}")
+        try:
+            result = run_sync(s, plan, GspreadClient(cfg), write=not args.prova)
+        except (SheetLayoutError, RuntimeError) as exc:
+            raise SystemExit(f"Sincronizzazione non possibile: {exc}") from exc
+    for tab, layout in result.layouts.items():
+        cols = ", ".join(f"{name}={chr(65 + j)}" for name, j in layout.columns.items())
+        kind = "testo" if layout.amount_as_text else "numero"
+        print(f"  {tab}: intestazione alla riga {layout.header_row} ({cols}; importo come {kind})")
+    for rows in result.preview.values():
+        for row in rows[: args.righe]:
+            print("    " + " | ".join(str(v) for v in row))
+        if len(rows) > args.righe:
+            print(f"    ... e altre {len(rows) - args.righe}")
+    verb = "da scrivere" if args.prova else "scritte"
+    for tab, n in result.written.items():
+        print(f"  {tab}: {n} righe {verb}")
+    print(f"  già presenti nel foglio: {result.already_there}")
+    if args.prova:
+        print("Prova: nessuna riga scritta")
+
+
 def main() -> None:
     for stream in (sys.stdout, sys.stderr):  # € e accenti nel terminale di Windows
         if hasattr(stream, "reconfigure"):
@@ -262,6 +305,14 @@ def main() -> None:
         help="importa solo lo storico, senza creare le posizioni di partenza",
     )
     p_hp.set_defaults(func=_cmd_history_portfolio)
+
+    p_sync = sub.add_parser("sync-sheet", help="invia i movimenti al foglio Google condiviso")
+    p_sync.add_argument("--config", default="config.toml")
+    p_sync.add_argument(
+        "--prova", action="store_true", help="legge il foglio e mostra le righe, senza scrivere"
+    )
+    p_sync.add_argument("--righe", type=int, default=10, help="righe mostrate in prova")
+    p_sync.set_defaults(func=_cmd_sync_sheet)
 
     args = parser.parse_args()
     args.func(args)

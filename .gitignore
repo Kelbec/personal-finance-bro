@@ -9,6 +9,8 @@ data/
 !tests/fixtures/*.csv
 !tests/fixtures/*.xls
 config.toml
+google-credentials.json
+*credentials*.json
 
 # --- Python ---
 __pycache__/

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import tempfile
 from collections.abc import Callable
@@ -26,6 +27,15 @@ from pfb_core.portfolio import (
 )
 from pfb_core.prices import fetch_prices
 from pfb_core.rules import mark_internal, pending_review, set_category
+from pfb_core.sheets_sync import (
+    GspreadClient,
+    SyncPlan,
+    add_manual_transaction,
+    load_sheet_config,
+    manual_accounts,
+    plan_sync,
+    run_sync,
+)
 
 EXTENSIONS = {AccountSource.CSV_TR: ["csv"], AccountSource.XLS_BPER: ["xls"]}
 
@@ -50,6 +60,17 @@ def _toast(control: ft.Control, text: str, error: bool = False) -> None:
     page.show_dialog(
         ft.SnackBar(ft.Text(text), bgcolor=ft.Colors.ERROR_CONTAINER if error else None)
     )
+
+
+def _category_options(engine: Engine) -> list[ft.dropdown.Option]:
+    """Categorie nell'ordine dei gruppi: entrate, spese, risparmio, extra."""
+    with session(engine) as s:
+        cats = s.exec(select(Category)).all()
+    opts = []
+    for group in CategoryGroup:
+        opts += [ft.dropdown.Option(key=str(c.id), text=c.label) for c in cats
+                 if c.group == group]  # fmt: skip
+    return opts
 
 
 class ImportView(ft.Column):
@@ -152,13 +173,7 @@ class ReviewView(ft.Column):
         self.refresh(update=False)
 
     def _category_options(self) -> list[ft.dropdown.Option]:
-        with session(self.engine) as s:
-            cats = s.exec(select(Category)).all()
-        opts = []
-        for group in CategoryGroup:
-            opts += [ft.dropdown.Option(key=str(c.id), text=c.label) for c in cats
-                     if c.group == group]  # fmt: skip
-        return opts
+        return _category_options(self.engine)
 
     def refresh(self, update: bool = True) -> None:
         with session(self.engine) as s:
@@ -501,3 +516,168 @@ class PortfolioView(ft.Column):
             build_all_snapshots(s)
         _toast(self, "Saldo salvato")
         self.refresh()
+
+
+class AddView(ft.Column):
+    """Spesa inserita a mano e sincronizzazione verso il foglio Google condiviso."""
+
+    def __init__(
+        self, engine: Engine, config_path: Path, on_added: Callable[[], None] | None = None
+    ):
+        super().__init__(spacing=12, expand=True, scroll=ft.ScrollMode.AUTO)
+        self.engine = engine
+        self.config_path = config_path
+        self.on_added = on_added
+        with session(engine) as s:
+            accounts = manual_accounts(s)
+        self.account = ft.Dropdown(
+            label="Conto",
+            options=[ft.dropdown.Option(key=str(a.id), text=a.name) for a in accounts],
+            value=str(accounts[0].id) if accounts else None,
+            width=320,
+        )
+        self.date = ft.TextField(
+            label="Data (AAAA-MM-GG)", value=dt.date.today().isoformat(), width=200
+        )
+        self.amount = ft.TextField(
+            label="Importo €", width=150, keyboard_type=ft.KeyboardType.NUMBER
+        )
+        self.category = ft.Dropdown(
+            label="Categoria",
+            options=_category_options(engine),
+            enable_filter=True,
+            editable=True,
+            width=320,
+        )
+        self.description = ft.TextField(label="Descrizione", width=320)
+        self.sync_status = ft.Text(size=12)
+        self.sync_button = ft.FilledButton(
+            "Sincronizza Google Sheet", icon=ft.Icons.SYNC, on_click=self._on_sync
+        )
+        self.controls = [
+            ft.Text("Aggiungi movimento", size=22, weight=ft.FontWeight.BOLD),
+            ft.Text("Contanti, PayPal, Satispay: le spese bancarie arrivano dall'import.", size=12),
+            self.account,
+            ft.Row([self.date, self.amount], wrap=True),
+            self.category,
+            self.description,
+            ft.FilledButton("Salva", icon=ft.Icons.ADD, on_click=self._on_save),
+            ft.Divider(),
+            ft.Text("Foglio Google condiviso", size=16, weight=ft.FontWeight.W_600),
+            self.sync_button,
+            self.sync_status,
+        ]
+        if not accounts:
+            self.controls.insert(
+                2,
+                ft.Text(
+                    'Nessun conto manuale: aggiungine uno in config.toml (source = "manuale").'
+                ),
+            )
+        self._plan: SyncPlan | None = None
+
+    def _on_save(self, e) -> None:
+        try:
+            day = dt.date.fromisoformat((self.date.value or "").strip())
+            amount = Decimal((self.amount.value or "").strip().replace(",", "."))
+        except (ValueError, ArithmeticError):
+            _toast(self, "Data o importo non validi", error=True)
+            return
+        if not self.account.value or not self.category.value:
+            _toast(self, "Scegli conto e categoria", error=True)
+            return
+        try:
+            with session(self.engine) as s:
+                add_manual_transaction(
+                    s,
+                    s.get(Account, int(self.account.value)),
+                    day,
+                    amount,
+                    s.get(Category, int(self.category.value)),
+                    self.description.value or "",
+                )
+        except ValueError as exc:
+            _toast(self, str(exc), error=True)
+            return
+        self.amount.value = ""
+        self.description.value = ""
+        _toast(self, "Movimento salvato")
+        _refresh(self)
+        if self.on_added:
+            self.on_added()
+
+    def _on_sync(self, e) -> None:
+        cfg = load_sheet_config(self.config_path)
+        if cfg is None:
+            _toast(
+                self,
+                "Sincronizzazione non configurata: aggiungi [google_sheet] a config.toml",
+                error=True,
+            )
+            return
+        with session(self.engine) as s:
+            self._plan = plan_sync(s, cfg)
+        plan = self._plan
+        skipped = "".join(
+            f"\n{owner or '?'}: {n} movimenti senza scheda configurata"
+            for owner, n in plan.no_tab.items()
+        )
+        if not plan.rows:
+            self.sync_status.value = "Niente da inviare: il foglio è aggiornato." + skipped
+            _refresh(self)
+            return
+        tabs = ", ".join(f"{tab} ({len(rows)})" for tab, rows in plan.by_tab().items())
+        text = (
+            f"{len(plan.rows)} movimenti dal {plan.first:%d/%m/%Y} al {plan.last:%d/%m/%Y}\n"
+            f"Schede: {tabs}\n"
+            "Quelli già presenti nel foglio (stessa data, importo e categoria) vengono saltati."
+            + skipped
+        )
+        page = _page(self)
+        if page is None:
+            return
+        page.show_dialog(
+            ft.AlertDialog(
+                title=ft.Text("Inviare al foglio Google?"),
+                content=ft.Text(text),
+                actions=[
+                    ft.TextButton("Annulla", on_click=lambda _: page.pop_dialog()),
+                    ft.FilledButton("Invia", on_click=self._on_confirm),
+                ],
+            )
+        )
+
+    async def _on_confirm(self, e) -> None:
+        page = _page(self)
+        if page is not None:
+            page.pop_dialog()
+        await self.sync_now()
+
+    async def sync_now(self, client=None) -> None:
+        """Esegue la sincronizzazione; la rete gira in un thread per non bloccare la UI."""
+        if self._plan is None:
+            return
+        cfg = load_sheet_config(self.config_path)
+        self.sync_button.disabled = True
+        self.sync_status.value = "Invio in corso..."
+        _refresh(self)
+        try:
+            result = await asyncio.to_thread(self._sync_blocking, cfg, client)
+        except Exception as exc:  # noqa: BLE001  (rete, permessi, scheda inesistente: va mostrato)
+            self.sync_status.value = f"Sincronizzazione non riuscita: {exc}"
+            _toast(self, "Sincronizzazione non riuscita", error=True)
+        else:
+            written = sum(result.written.values())
+            self.sync_status.value = (
+                f"Scritti {written} movimenti; {result.already_there} erano già nel foglio."
+            )
+            _toast(self, "Foglio Google aggiornato")
+        finally:
+            self.sync_button.disabled = False
+            self._plan = None
+            _refresh(self)
+
+    def _sync_blocking(self, cfg, client):
+        client = client or GspreadClient(cfg)
+        with session(self.engine) as s:
+            return run_sync(s, plan_sync(s, cfg), client)

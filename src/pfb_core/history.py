@@ -52,7 +52,7 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-def _category_key(label: str) -> str:
+def category_key(label: str) -> str:
     """Nome della categoria senza emoji: '🎮 Hobbie/Gadget' → 'hobbie/gadget'."""
     label = label.strip()
     parts = label.split(" ", 1)
@@ -95,7 +95,7 @@ def _history_account(s: Session, owner_name: str) -> Account:
     return account
 
 
-def _sign(cat: Category) -> int:
+def category_sign(cat: Category) -> int:
     if cat.group == CategoryGroup.ENTRATE:
         return 1
     if cat.group == CategoryGroup.EXTRA and cat.name.lower().startswith("entrata"):
@@ -110,7 +110,7 @@ def import_cashflow(
     wb = openpyxl.load_workbook(path, data_only=True, read_only=False)
     selected = [wb[n] for n in sheets] if sheets else _cashflow_sheets(wb)
     report = CashflowReport(sheets=[ws.title for ws in selected])
-    categories = {_category_key(f"{c.emoji} {c.name}"): c for c in s.exec(select(Category)).all()}
+    categories = {category_key(f"{c.emoji} {c.name}"): c for c in s.exec(select(Category)).all()}
 
     # chiave del movimento -> numero massimo di occorrenze in un singolo foglio
     occurrences: dict[tuple, int] = {}
@@ -133,7 +133,7 @@ def import_cashflow(
     existing: dict[int, set[str]] = defaultdict(set)
     for key, n in occurrences.items():
         owner, day, amount, label, causale = key
-        cat = categories.get(_category_key(label))
+        cat = categories.get(category_key(label))
         if cat is None:
             report.unknown_categories[label] += n
             continue
@@ -148,7 +148,7 @@ def import_cashflow(
             if source_id in existing[account.id]:
                 report.duplicates += 1
                 continue
-            s.add(Transaction(account_id=account.id, date=day, amount=_sign(cat) * amount,
+            s.add(Transaction(account_id=account.id, date=day, amount=category_sign(cat) * amount,
                               type="STORICO", description=causale, category_id=cat.id,
                               source_id=source_id))  # fmt: skip
             existing[account.id].add(source_id)

@@ -1,7 +1,8 @@
 # Personal Finance Bro — note per Claude Code
 
 App personale (Python) per cashflow e investimenti da export Trade Republic (CSV) e BPER (XLS).
-Dati solo in locale: SQLite, niente cloud. Lingua del progetto: italiano (UI, commit, commenti).
+Dati solo in locale: SQLite, niente cloud. Unica eccezione, opzionale e su richiesta: la
+sincronizzazione verso il foglio Google condiviso (`sheets_sync`, sezione `[google_sheet]`). Lingua del progetto: italiano (UI, commit, commenti).
 
 ## Comandi
 - `uv sync --group dev --extra app` — installa tutto
@@ -11,7 +12,7 @@ Dati solo in locale: SQLite, niente cloud. Lingua del progetto: italiano (UI, co
 
 ## Struttura
 - `src/pfb_core/` logica pura, senza dipendenze da Flet (models, importers/, rules, importer, seed,
-  metrics, prices, portfolio, history)
+  metrics, prices, portfolio, history, sheets_sync)
 - `src/pfb_app/` schermate Flet; `src/main.py` entry point (`[tool.flet.app] path = "src"`)
 - `tests/` pytest; `tests/conftest.py` genera un .xls BPER finto con xlwt
 
