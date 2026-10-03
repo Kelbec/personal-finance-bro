@@ -10,6 +10,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from pfb_core.models import Category, CategoryGroup, Transaction
@@ -85,7 +86,7 @@ def month_summary(s: Session, month: dt.date) -> MonthSummary:
 
     summary.by_category = sorted(
         (CategoryTotal(categories[cid], total, categories[cid].monthly_budget)
-         for cid, total in spent.items()),
+         for cid, total in spent.items() if total != ZERO),  # rimborso che azzera la spesa
         key=lambda c: c.spent,
         reverse=True,
     )  # fmt: skip
@@ -94,8 +95,9 @@ def month_summary(s: Session, month: dt.date) -> MonthSummary:
 
 def available_months(s: Session) -> list[dt.date]:
     """Mesi (primo giorno) con almeno un movimento, dal più recente."""
-    dates = s.exec(select(Transaction.date)).all()
-    return sorted({d.replace(day=1) for d in dates}, reverse=True)
+    month = func.strftime("%Y-%m-01", Transaction.date)
+    rows = s.exec(select(month).distinct().order_by(month.desc())).all()
+    return [dt.date.fromisoformat(r) for r in rows]
 
 
 def monthly_trend(s: Session, months: int = 6, until: dt.date | None = None) -> list[MonthSummary]:
