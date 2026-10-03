@@ -39,8 +39,9 @@ class FakeSheet:
             return self.formulas
         return self.data[tab]
 
-    def append(self, tab, rows, header_row):
-        self.appended.append((tab, rows, header_row))
+    def append(self, tab, rows, first_row, datetime_col=None):
+        self.appended.append((tab, rows, first_row))
+        self.datetime_col = datetime_col
         self.data[tab].extend(rows)
 
 
@@ -158,8 +159,8 @@ def test_sync_writes_once_and_skips_rows_already_in_sheet(s, bper_account, cfg):
     r = run_sync(s, plan_sync(s, cfg), sheet, NOW)
     assert r.already_there == 1
     assert r.written == {TAB: 2}
-    tab, rows, header_row = sheet.appended[0]
-    assert header_row == 1
+    tab, rows, first_row = sheet.appended[0]
+    assert first_row == 3  # intestazione + la riga già presente
     assert [row[3] for row in rows] == ["2026-09-03", "2026-09-10"]
     assert len(s.exec(select(SheetSync)).all()) == 3
 
@@ -174,8 +175,9 @@ def test_sync_to_form_responses_writes_like_a_form_submission(s, bper_account, c
                       header=FORM_HEADER)  # fmt: skip
     run_sync(s, plan_sync(s, cfg), sheet, NOW)
     assert sheet.appended[0][1] == [
-        ["2026-10-03 15:40:00", "Bar Centrale", "🍔 Ristorante/Asporto", "'12.40", "2026-09-03"]
+        [46298.65277778, "Bar Centrale", "🍔 Ristorante/Asporto", "'12.40", "2026-09-03"]
     ]
+    assert sheet.datetime_col == 0  # Informazioni cronologiche formattata come data e ora
 
 
 def test_derived_tab_is_refused_and_nothing_written(s, bper_account, cfg):
@@ -218,7 +220,7 @@ def test_failed_append_marks_nothing(s, bper_account, cfg):
     _tx(s, bper_account, dt.date(2026, 9, 3), "-4.50", _cat(s, "Casa"))
 
     class Broken(FakeSheet):
-        def append(self, tab, rows, header_row):
+        def append(self, tab, rows, first_row, datetime_col=None):
             raise ConnectionError("offline")
 
     with pytest.raises(ConnectionError):
@@ -261,3 +263,10 @@ def test_causale_drops_transaction_codes(s, tr_account, cfg):
     s.commit()
     cfg.tabs = {"Test": TAB}
     assert plan_sync(s, cfg).rows[0].causale == "Saveback cash reward"
+
+
+def test_next_row_ignores_gaps_and_formula_tails():
+    header = ["Causale", "Categoria", "Importo", "Data", "Mese"]
+    rows = [header, ["a", "🏠 Casa", 1, 45685, 1], ["", "", "", "", ""],  # riga vuota in mezzo
+            ["b", "🏠 Casa", 2, 45686, 1], ["", "", "", "", 12], ["", "", "", "", 12]]  # fmt: skip
+    assert detect_layout(rows).next_row(rows) == 5  # dopo "b", non nel buco e non in fondo

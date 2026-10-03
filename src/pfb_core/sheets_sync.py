@@ -76,7 +76,9 @@ def load_sheet_config(config_path: str | Path) -> SheetConfig | None:
 class SheetClient(Protocol):
     def rows(self, tab: str, formulas: bool = False) -> list[list]: ...
 
-    def append(self, tab: str, rows: list[list], header_row: int) -> None: ...
+    def append(
+        self, tab: str, rows: list[list], first_row: int, datetime_col: int | None = None
+    ) -> None: ...
 
 
 class GspreadClient:
@@ -103,10 +105,20 @@ class GspreadClient:
         option = self._render.formula if formulas else self._render.unformatted
         return self._book.worksheet(tab).get_all_values(value_render_option=option)
 
-    def append(self, tab: str, rows: list[list], header_row: int) -> None:
+    def append(
+        self, tab: str, rows: list[list], first_row: int, datetime_col: int | None = None
+    ) -> None:
+        # posizione esplicita: "append" di Sheets riempirebbe la prima riga vuota in mezzo
+        ws = self._book.worksheet(tab)
+        needed = first_row + len(rows) - 1
+        if ws.row_count < needed:
+            ws.add_rows(needed - ws.row_count)
         # USER_ENTERED: "2026-09-12" diventa una data vera, "'7.78" resta testo
-        self._book.worksheet(tab).append_rows(rows, value_input_option=self._input,
-                                              table_range=f"A{header_row}")  # fmt: skip
+        ws.update(values=rows, range_name=f"A{first_row}", value_input_option=self._input)
+        if datetime_col is not None:  # il seriale va mostrato come data e ora, come nel modulo
+            col = chr(65 + datetime_col)
+            ws.format(f"{col}{first_row}:{col}{needed}",
+                      {"numberFormat": {"type": "DATE_TIME"}})  # fmt: skip
 
 
 # --- struttura della scheda --------------------------------------------------
@@ -148,6 +160,15 @@ class Layout:
         return [r for r in rows[self.header_row:]
                 if len(r) > max(cat, amount) and r[cat] not in ("", None)
                 and r[amount] not in ("", None)]  # fmt: skip
+
+    def next_row(self, rows: Sequence[Sequence]) -> int:
+        """Riga (1-based) dopo l'ultimo movimento: le formule di Mese/Anno più sotto non contano."""
+        cols = [self.columns[name] for name in WRITTEN_AS_IS]
+        last = self.header_row
+        for i, r in enumerate(rows[self.header_row :], start=self.header_row + 1):
+            if any(j < len(r) and r[j] not in ("", None) for j in cols):
+                last = i
+        return last + 1
 
     def key(self, row: Sequence) -> tuple:
         c = self.columns
@@ -209,7 +230,7 @@ class PendingRow:
         else:
             amount = float(self.amount)
         fields = {
-            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": _serial(now),  # data e ora di Sheets, come quelle del modulo
             "causale": self.causale,
             "categoria": self.categoria,
             "importo": amount,
@@ -242,6 +263,11 @@ class SyncPlan:
         for r in self.rows:
             out.setdefault(r.tab, []).append(r)
         return out
+
+
+def _serial(moment: dt.datetime) -> float:
+    """Data e ora come numero seriale di Sheets (giorni dal 30/12/1899)."""
+    return round((moment - dt.datetime(1899, 12, 30)).total_seconds() / 86400, 8)
 
 
 def _row_key(day, amount, category) -> tuple:
@@ -358,7 +384,8 @@ def run_sync(
             result.written[tab] += len(to_write)
             continue
         if to_write:
-            client.append(tab, [r.values(layout, now) for r in to_write], layout.header_row)
+            values = [r.values(layout, now) for r in to_write]
+            client.append(tab, values, layout.next_row(rows), layout.columns.get("timestamp"))
             for row in to_write:  # solo dopo una scrittura riuscita
                 s.add(SheetSync(transaction_id=row.tx.id, tab=tab))
             result.written[tab] += len(to_write)
