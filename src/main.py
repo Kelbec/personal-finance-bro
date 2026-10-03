@@ -20,8 +20,22 @@ from pfb_app.views import DashboardView, ImportView, PortfolioView, ReviewView
 from pfb_core.db import get_engine, init_db, session
 from pfb_core.seed import seed_all
 
-DB_PATH = os.environ.get("PFB_DB", "data/pfb.sqlite")
-CONFIG_PATH = Path(os.environ.get("PFB_CONFIG", "config.toml"))
+
+def _base_dir() -> Path:
+    """Cartella di data/pfb.sqlite e config.toml.
+
+    Dai sorgenti è la radice del progetto: `flet run` sposta la cartella di lavoro in
+    src/.flet/storage/data, e con percorsi relativi l'app aprirebbe un database vuoto.
+    Nell'app installata (senza pyproject.toml accanto) è la cartella dati dell'app.
+    """
+    root = Path(__file__).resolve().parent.parent
+    if (root / "pyproject.toml").exists():
+        return root
+    return Path(os.environ.get("FLET_APP_STORAGE_DATA", "."))
+
+
+DB_PATH = os.environ.get("PFB_DB", str(_base_dir() / "data" / "pfb.sqlite"))
+CONFIG_PATH = Path(os.environ.get("PFB_CONFIG", _base_dir() / "config.toml"))
 
 
 def main(page: ft.Page) -> None:

@@ -102,3 +102,19 @@ def test_pick_registers_picker_on_page_and_imports(engine, tr_account, tr_csv, m
     assert len(page.services) == 1  # il FilePicker è registrato sulla pagina
     assert updates  # e la pagina è stata aggiornata, così il client lo conosce
     assert any("Nuovi" in c.value for c in view.result.controls)
+
+
+def test_paths_point_to_project_even_with_flet_run_cwd(tmp_path, monkeypatch):
+    """`flet run` lancia l'app da src/.flet/storage/data: i percorsi non dipendono dal cwd."""
+    import importlib
+    from pathlib import Path
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PFB_DB", raising=False)
+    monkeypatch.delenv("PFB_CONFIG", raising=False)
+    import main
+
+    main = importlib.reload(main)
+    root = Path(__file__).resolve().parent.parent
+    assert Path(main.DB_PATH) == root / "data" / "pfb.sqlite"
+    assert root / "config.toml" == main.CONFIG_PATH
