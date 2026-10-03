@@ -42,7 +42,13 @@ from pfb_core.portfolio import (
 from pfb_core.prices import fetch_prices
 from pfb_core.rules import pending_review
 from pfb_core.seed import seed_all
-from pfb_core.sheets_sync import GspreadClient, load_sheet_config, plan_sync, run_sync
+from pfb_core.sheets_sync import (
+    GspreadClient,
+    SheetLayoutError,
+    load_sheet_config,
+    plan_sync,
+    run_sync,
+)
 
 
 def _cmd_init(args) -> None:
@@ -211,15 +217,25 @@ def _cmd_sync_sheet(args) -> None:
             print("Niente da inviare: il foglio è aggiornato")
             return
         print(f"{len(plan.rows)} movimenti dal {plan.first} al {plan.last}")
-        if args.prova:
-            for r in plan.rows:
-                print(f"  {r.tab}: " + " | ".join(str(v) for v in r.values))
-            print("Prova: nessuna riga scritta")
-            return
-        result = run_sync(s, plan, GspreadClient(cfg))
+        try:
+            result = run_sync(s, plan, GspreadClient(cfg), write=not args.prova)
+        except (SheetLayoutError, RuntimeError) as exc:
+            raise SystemExit(f"Sincronizzazione non possibile: {exc}") from exc
+    for tab, layout in result.layouts.items():
+        cols = ", ".join(f"{name}={chr(65 + j)}" for name, j in layout.columns.items())
+        kind = "testo" if layout.amount_as_text else "numero"
+        print(f"  {tab}: intestazione alla riga {layout.header_row} ({cols}; importo come {kind})")
+    for rows in result.preview.values():
+        for row in rows[: args.righe]:
+            print("    " + " | ".join(str(v) for v in row))
+        if len(rows) > args.righe:
+            print(f"    ... e altre {len(rows) - args.righe}")
+    verb = "da scrivere" if args.prova else "scritte"
     for tab, n in result.written.items():
-        print(f"  {tab}: {n} righe scritte")
+        print(f"  {tab}: {n} righe {verb}")
     print(f"  già presenti nel foglio: {result.already_there}")
+    if args.prova:
+        print("Prova: nessuna riga scritta")
 
 
 def main() -> None:
@@ -292,7 +308,10 @@ def main() -> None:
 
     p_sync = sub.add_parser("sync-sheet", help="invia i movimenti al foglio Google condiviso")
     p_sync.add_argument("--config", default="config.toml")
-    p_sync.add_argument("--prova", action="store_true", help="mostra le righe senza scriverle")
+    p_sync.add_argument(
+        "--prova", action="store_true", help="legge il foglio e mostra le righe, senza scrivere"
+    )
+    p_sync.add_argument("--righe", type=int, default=10, help="righe mostrate in prova")
     p_sync.set_defaults(func=_cmd_sync_sheet)
 
     args = parser.parse_args()

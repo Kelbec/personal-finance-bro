@@ -5,11 +5,16 @@ richiesta e solo se `config.toml` ha una sezione `[google_sheet]`. L'accesso usa
 account di servizio; la chiave JSON resta in locale, fuori da git.
 
 Ogni movimento categorizzato (giroconti e storico esclusi) dalla data `dal` in poi viene
-aggiunto in fondo alla scheda del suo intestatario, nello stesso formato delle righe
-scritte a mano: Causale | Categoria | Importo | Data | Mese | Intestatario.
+aggiunto in fondo alla scheda del suo intestatario. Il formato si adatta alla scheda:
+si cerca l'intestazione nelle prime righe (Causale, Categoria, Importo, Data e, se ci sono,
+Informazioni cronologiche, Mese, Anno, Intestatario) e l'importo si scrive come testo se
+la scheda lo tiene come testo (es. le risposte di un Google Form). Così l'app scrive come
+un nuovo invio del modulo, e le schede che leggono le risposte con le formule si aggiornano.
+Le schede generate da formule vengono rifiutate: scriverci romperebbe le formule.
+
 L'importo è positivo per spese ed entrate; un rimborso su una categoria di spesa è
 negativo. Un movimento già presente nella scheda (stessa data, importo e categoria) non
-viene riscritto: così non si duplicano le spese inserite a mano anche nel foglio.
+viene riscritto: così non si duplicano le spese inserite anche dal modulo.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ import tomllib
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Protocol
 
@@ -69,9 +74,9 @@ def load_sheet_config(config_path: str | Path) -> SheetConfig | None:
 
 
 class SheetClient(Protocol):
-    def rows(self, tab: str) -> list[list]: ...
+    def rows(self, tab: str, formulas: bool = False) -> list[list]: ...
 
-    def append(self, tab: str, rows: list[list]) -> None: ...
+    def append(self, tab: str, rows: list[list], header_row: int) -> None: ...
 
 
 class GspreadClient:
@@ -86,20 +91,102 @@ class GspreadClient:
             raise RuntimeError(f"chiave dell'account di servizio non trovata: {cfg.credentials}")
         from gspread.utils import ValueInputOption, ValueRenderOption
 
-        self._render, self._input = ValueRenderOption.unformatted, ValueInputOption.user_entered
+        self._render = ValueRenderOption
+        self._input = ValueInputOption.user_entered
         # solo i fogli di calcolo, non tutto Google Drive
         client = gspread.service_account(filename=str(cfg.credentials), scopes=[SCOPE])
         key = cfg.spreadsheet
         self._book = client.open_by_url(key) if key.startswith("http") else client.open_by_key(key)
 
-    def rows(self, tab: str) -> list[list]:
-        # valori grezzi: date come numero seriale, importi come numero
-        return self._book.worksheet(tab).get_all_values(value_render_option=self._render)
+    def rows(self, tab: str, formulas: bool = False) -> list[list]:
+        # valori grezzi (date come numero seriale), oppure le formule così come sono scritte
+        option = self._render.formula if formulas else self._render.unformatted
+        return self._book.worksheet(tab).get_all_values(value_render_option=option)
 
-    def append(self, tab: str, rows: list[list]) -> None:
-        # USER_ENTERED: "2026-09-12" diventa una data vera, come se fosse scritta a mano
+    def append(self, tab: str, rows: list[list], header_row: int) -> None:
+        # USER_ENTERED: "2026-09-12" diventa una data vera, "'7.78" resta testo
         self._book.worksheet(tab).append_rows(rows, value_input_option=self._input,
-                                              table_range="A1")  # fmt: skip
+                                              table_range=f"A{header_row}")  # fmt: skip
+
+
+# --- struttura della scheda --------------------------------------------------
+class SheetLayoutError(ValueError):
+    pass
+
+
+FIELDS = {  # campo -> intestazioni accettate (minuscole, senza spazi né simboli)
+    "timestamp": ("informazionicronologiche", "timestamp", "datainvio"),
+    "causale": ("causale", "descrizione"),
+    "categoria": ("categoria",),
+    "importo": ("importo", "importoeuro"),
+    "data": ("data",),
+    "mese": ("mese",),
+    "anno": ("anno",),
+    "intestatario": ("intestatario",),
+}
+REQUIRED = ("causale", "categoria", "importo", "data")
+WRITTEN_AS_IS = ("causale", "categoria", "importo", "data")  # una formula qui = scheda derivata
+
+
+def _norm(text) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(text).lower())
+
+
+@dataclass
+class Layout:
+    header_row: int  # 1-based, come in Sheets
+    columns: dict[str, int]  # campo -> indice di colonna (0-based)
+    amount_as_text: bool = False  # importo tenuto come testo (es. risposte di un modulo)
+    decimal_sep: str = "."
+
+    @property
+    def width(self) -> int:
+        return max(self.columns.values()) + 1
+
+    def data_rows(self, rows: Sequence[Sequence]) -> list[Sequence]:
+        cat, amount = self.columns["categoria"], self.columns["importo"]
+        return [r for r in rows[self.header_row:]
+                if len(r) > max(cat, amount) and r[cat] not in ("", None)
+                and r[amount] not in ("", None)]  # fmt: skip
+
+    def key(self, row: Sequence) -> tuple:
+        c = self.columns
+        return _row_key(row[c["data"]] if len(row) > c["data"] else None,
+                        row[c["importo"]], row[c["categoria"]])  # fmt: skip
+
+
+def detect_layout(rows: Sequence[Sequence]) -> Layout:
+    """Trova la riga di intestazione (entro le prime 5) e la posizione dei campi."""
+    for i, row in enumerate(rows[:5]):
+        names = [_norm(v) for v in row]
+        columns = {}
+        for name, aliases in FIELDS.items():
+            idx = next((j for j, n in enumerate(names) if n in aliases), None)
+            if idx is not None:
+                columns[name] = idx
+        if all(f in columns for f in REQUIRED):
+            layout = Layout(header_row=i + 1, columns=columns)
+            amounts = [r[columns["importo"]] for r in layout.data_rows(rows)]
+            texts = [a for a in amounts if isinstance(a, str)]
+            if texts and len(texts) * 2 >= len(amounts):
+                layout.amount_as_text = True
+                layout.decimal_sep = "," if any("," in t for t in texts) else "."
+            return layout
+    raise SheetLayoutError(
+        "intestazione non trovata: servono le colonne Causale, Categoria, Importo e Data"
+    )
+
+
+def check_not_derived(layout: Layout, formulas: Sequence[Sequence], tab: str) -> None:
+    """Rifiuta le schede i cui movimenti sono calcolati da formule (es. da un modulo)."""
+    for row in formulas[layout.header_row :]:
+        for name in WRITTEN_AS_IS:
+            j = layout.columns[name]
+            if j < len(row) and str(row[j]).startswith("="):
+                raise SheetLayoutError(
+                    f"la scheda {tab!r} è calcolata da formule: scrivendoci si romperebbero. "
+                    "Indica la scheda da cui legge (es. 'Risposte del modulo 1')."
+                )
 
 
 # --- cosa inviare ------------------------------------------------------------
@@ -107,11 +194,34 @@ class GspreadClient:
 class PendingRow:
     tx: Transaction
     tab: str
-    values: list  # Causale, Categoria, Importo, Data, Mese, Intestatario
+    causale: str
+    categoria: str  # con emoji, come nel foglio
+    amount: Decimal  # positivo; negativo se rimborso
+    owner: str
 
     @property
     def key(self) -> tuple:
-        return _row_key(self.values[3], self.values[2], self.values[1])
+        return self.tx.date, self.amount, category_key(self.categoria)
+
+    def values(self, layout: Layout, now: dt.datetime) -> list:
+        if layout.amount_as_text:  # "'" = testo in Sheets, come lo salva il modulo
+            amount = "'" + f"{self.amount:.2f}".replace(".", layout.decimal_sep)
+        else:
+            amount = float(self.amount)
+        fields = {
+            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "causale": self.causale,
+            "categoria": self.categoria,
+            "importo": amount,
+            "data": self.tx.date.isoformat(),
+            "mese": self.tx.date.month,
+            "anno": self.tx.date.year,
+            "intestatario": self.owner,
+        }
+        out = [""] * layout.width
+        for name, j in layout.columns.items():
+            out[j] = fields[name]
+        return out
 
 
 @dataclass
@@ -134,17 +244,17 @@ class SyncPlan:
         return out
 
 
-def _row_key(day, amount, category: str) -> tuple:
+def _row_key(day, amount, category) -> tuple:
     """Chiave di confronto con le righe del foglio: data, importo al centesimo, categoria."""
-    if isinstance(day, (int, float)):  # data seriale di Sheets (giorni dal 30/12/1899)
+    if isinstance(day, (int, float)) and not isinstance(day, bool):  # seriale di Sheets
         day = dt.date(1899, 12, 30) + dt.timedelta(days=int(day))
-    elif isinstance(day, str):
-        day = _parse_date(day)
     elif isinstance(day, dt.datetime):
         day = day.date()
+    elif isinstance(day, str):
+        day = _parse_date(day)
     try:
-        amount = Decimal(str(amount).replace(",", ".")).quantize(CENT)
-    except ArithmeticError:
+        amount = Decimal(str(amount).strip().lstrip("'").replace(",", ".")).quantize(CENT)
+    except (ArithmeticError, InvalidOperation):
         amount = None
     return day, amount, category_key(str(category))
 
@@ -159,9 +269,14 @@ def _parse_date(text: str) -> dt.date | None:
     return None
 
 
+UUID = re.compile(r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b", re.IGNORECASE)
+
+
 def _causale(tx: Transaction) -> str:
+    """Testo leggibile: senza codici di transazione (es. 'Saveback cash reward <uuid> ...')."""
     text = tx.counterparty or tx.description or tx.type
-    return re.sub(r"\s+", " ", text).strip()[:80]
+    text = UUID.split(text)[0] if UUID.search(text) else text  # dopo il codice: solo riferimenti
+    return re.sub(r"\s+", " ", text).strip(" :-")[:80] or tx.type
 
 
 def plan_sync(s: Session, cfg: SheetConfig) -> SyncPlan:
@@ -190,46 +305,65 @@ def plan_sync(s: Session, cfg: SheetConfig) -> SyncPlan:
             plan.no_tab[owner] += 1
             continue
         cat = categories[tx.category_id]
-        amount = (tx.amount * category_sign(cat)).quantize(CENT)  # positivo; negativo se rimborso
-        values = [_causale(tx), f"{cat.emoji} {cat.name}", float(amount),
-                  tx.date.isoformat(), tx.date.month, owner]  # fmt: skip
-        plan.rows.append(PendingRow(tx, tab, values))
+        plan.rows.append(PendingRow(
+            tx=tx, tab=tab, causale=_causale(tx), categoria=f"{cat.emoji} {cat.name}",
+            amount=(tx.amount * category_sign(cat)).quantize(CENT), owner=owner,
+        ))  # fmt: skip
     return plan
 
 
 @dataclass
 class SyncResult:
-    written: Counter = field(default_factory=Counter)  # scheda -> righe scritte
+    written: Counter = field(default_factory=Counter)  # scheda -> righe scritte (o da scrivere)
     already_there: int = 0
+    layouts: dict[str, Layout] = field(default_factory=dict)
+    preview: dict[str, list[list]] = field(default_factory=dict)  # solo in prova
 
 
-def run_sync(s: Session, plan: SyncPlan, client: SheetClient) -> SyncResult:
-    """Scrive le righe del piano; registra ogni movimento inviato (o trovato già nel foglio)."""
+def run_sync(
+    s: Session,
+    plan: SyncPlan,
+    client: SheetClient,
+    now: dt.datetime | None = None,
+    write: bool = True,
+) -> SyncResult:
+    """Scrive le righe del piano; registra ogni movimento inviato (o trovato già nel foglio).
+
+    Prima di scrivere controlla tutte le schede: se una non va bene non si scrive nulla.
+    Con `write=False` legge il foglio e prepara le righe, ma non scrive e non registra nulla.
+    """
+    now = now or dt.datetime.now()
     result = SyncResult()
-    for tab, rows in plan.by_tab().items():
-        existing = Counter(_row_key(r[3], r[2], r[1]) for r in _data_rows(client.rows(tab)))
+    layouts = {}
+    for tab in plan.by_tab():
+        rows = client.rows(tab)
+        layout = detect_layout(rows)
+        check_not_derived(layout, client.rows(tab, formulas=True), tab)
+        layouts[tab] = (layout, rows)
+        result.layouts[tab] = layout
+    for tab, pending in plan.by_tab().items():
+        layout, rows = layouts[tab]
+        existing = Counter(layout.key(r) for r in layout.data_rows(rows))
         to_write = []
-        for row in rows:
+        for row in pending:
             if existing[row.key] > 0:  # già nel foglio: non riscrivere
                 existing[row.key] -= 1
-                s.add(SheetSync(transaction_id=row.tx.id, tab=tab, skipped=True))
+                if write:
+                    s.add(SheetSync(transaction_id=row.tx.id, tab=tab, skipped=True))
                 result.already_there += 1
             else:
                 to_write.append(row)
+        if not write:
+            result.preview[tab] = [r.values(layout, now) for r in to_write]
+            result.written[tab] += len(to_write)
+            continue
         if to_write:
-            client.append(tab, [r.values for r in to_write])  # se fallisce non segna nulla
-            for row in to_write:
+            client.append(tab, [r.values(layout, now) for r in to_write], layout.header_row)
+            for row in to_write:  # solo dopo una scrittura riuscita
                 s.add(SheetSync(transaction_id=row.tx.id, tab=tab))
             result.written[tab] += len(to_write)
         s.commit()
     return result
-
-
-def _data_rows(rows: Sequence[Sequence]) -> list[Sequence]:
-    """Righe con almeno data, importo e categoria; salta l'intestazione."""
-    return [
-        r for r in rows[1:] if len(r) >= 4 and r[1] not in ("", None) and r[2] not in ("", None)
-    ]
 
 
 # --- inserimento manuale -----------------------------------------------------
