@@ -75,6 +75,7 @@ class ImportView(ft.Column):
 
     async def _pick(self, e: ft.Event[ft.FilledButton]) -> None:
         if not self.account.value:
+            _toast(self, "Scegli prima il conto", error=True)
             return
         name, source = self.accounts[self.account.value]
         page = _page(self)
@@ -83,6 +84,7 @@ class ImportView(ft.Column):
         if self.picker is None:  # è un servizio: va registrato sulla pagina prima dell'uso
             self.picker = ft.FilePicker()
             page.services.append(self.picker)
+            page.update()  # senza update il client non conosce il servizio e la chiamata resta muta
         try:
             files = await self.picker.pick_files(
                 dialog_title=f"Export {name}",

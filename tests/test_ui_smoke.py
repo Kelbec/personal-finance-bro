@@ -64,7 +64,8 @@ def test_dashboard_reflects_import(engine, s, tr_account, tr_csv):
 def test_pick_registers_picker_on_page_and_imports(engine, tr_account, tr_csv, monkeypatch):
     from pfb_app import views
 
-    page = SimpleNamespace(services=[])
+    updates = []
+    page = SimpleNamespace(services=[], update=lambda: updates.append(1))
     monkeypatch.setattr(views, "_page", lambda control: page)
     monkeypatch.setattr(views, "_refresh", lambda control: None)
 
@@ -78,4 +79,5 @@ def test_pick_registers_picker_on_page_and_imports(engine, tr_account, tr_csv, m
     asyncio.run(view._pick(None))
 
     assert len(page.services) == 1  # il FilePicker è registrato sulla pagina
+    assert updates  # e la pagina è stata aggiornata, così il client lo conosce
     assert any("Nuovi" in c.value for c in view.result.controls)
