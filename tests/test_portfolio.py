@@ -211,3 +211,67 @@ def test_rebuild_drops_stale_snapshots(s, tr_account):
     s.commit()
     build_snapshots(s, dt.date(2026, 9, 30))
     assert s.exec(select(Snapshot).where(Snapshot.isin == VWCE)).first() is None
+
+
+# --- prezzo medio e PAC ------------------------------------------------------
+def _buy(s, account, day, shares, price, fee="0", sid=None, origin="piano"):
+    from pfb_core.models import Trade
+
+    amount = -(D(shares) * D(price)).quantize(D("0.01"))
+    s.add(Trade(account_id=account.id, isin=VWCE, date=day, shares=D(shares), price=D(price),
+                amount=amount, fee=D(fee), origin=origin,
+                source_id=sid or f"{day}-{shares}-{price}"))  # fmt: skip
+    s.commit()
+
+
+def test_pac_before_initial_position_is_not_counted_twice(s, tr_account):
+    _buy(s, tr_account, dt.date(2026, 6, 2), "1", "150")  # già dentro la posizione al 31/08
+    add_initial_position(s, tr_account, VWCE, D("10"), D("160"), dt.date(2026, 8, 31))
+    _buy(s, tr_account, dt.date(2026, 9, 2), "1", "170")  # PAC successivo: si aggiunge
+    pos = positions(s, dt.date(2026, 9, 30))[0]
+    assert pos.shares == D("11")
+    assert pos.cost == D("1770")  # 10 × 160 + 1 × 170
+    assert pos.avg_price == pytest.approx(D("160.909"), abs=D("0.001"))
+
+
+def test_avg_price_includes_fees_and_sells_keep_it(s, tr_account):
+    _buy(s, tr_account, dt.date(2026, 1, 2), "10", "100", fee="-1.00", origin="manuale")
+    _buy(s, tr_account, dt.date(2026, 2, 2), "10", "120")
+    p = positions(s, dt.date(2026, 2, 28))[0]
+    assert p.cost == D("2201.00")
+    assert p.avg_price == D("110.05")
+    from pfb_core.models import Trade
+
+    s.add(Trade(account_id=tr_account.id, isin=VWCE, date=dt.date(2026, 3, 2), shares=D("-5"),
+                price=D("130"), amount=D("650"), source_id="sell"))  # fmt: skip
+    s.commit()
+    p = positions(s, dt.date(2026, 3, 31))[0]
+    assert p.shares == D("15")
+    assert p.avg_price == D("110.05")  # la vendita non cambia il prezzo medio
+
+
+def test_reconcile_removes_estimate_when_history_is_complete(s, tr_account):
+    from pfb_core.portfolio import reconcile_initial_positions
+
+    add_initial_position(s, tr_account, VWCE, D("10.05"), D("160"), dt.date(2026, 8, 31))
+    _buy(s, tr_account, dt.date(2025, 3, 3), "6", "100")  # storia completa importata dopo
+    _buy(s, tr_account, dt.date(2026, 6, 2), "4", "150")
+    preview = reconcile_initial_positions(s, apply=False)
+    assert [(r.ticker, r.removed) for r in preview] == [("VWCE", False)]
+    assert preview[0].coverage == pytest.approx(D("0.995"), abs=D("0.001"))
+
+    [r] = reconcile_initial_positions(s)
+    assert r.removed
+    p = positions(s, dt.date(2026, 9, 30))[0]
+    assert p.shares == D("10")
+    assert p.avg_price == D("120")  # (6 × 100 + 4 × 150) / 10: prezzo medio vero
+
+
+def test_reconcile_keeps_estimate_when_history_is_partial(s, tr_account):
+    from pfb_core.portfolio import reconcile_initial_positions
+
+    add_initial_position(s, tr_account, VWCE, D("10"), D("160"), dt.date(2026, 8, 31))
+    _buy(s, tr_account, dt.date(2026, 6, 2), "1", "150")  # solo i PAC da maggio
+    [r] = reconcile_initial_positions(s)
+    assert not r.removed
+    assert positions(s, dt.date(2026, 9, 30))[0].shares == D("10")

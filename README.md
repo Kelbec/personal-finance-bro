@@ -47,6 +47,17 @@ uv run python -m pfb_core portfolio     # patrimonio, P&L, rendimento, allocazio
 ```
 
 Quote = trade importati + posizioni di partenza; valore = quote × ultima chiusura.
+Una posizione di partenza alla data D è tutto ciò che si possedeva quel giorno: i trade
+precedenti dello stesso strumento sono già compresi e non si sommano. Il prezzo medio è il
+costo medio di tutti gli acquisti, PAC e commissioni inclusi; le vendite non lo cambiano.
+
+Per avere il prezzo medio vero invece di quello stimato, importa da Trade Republic la storia
+completa (tutte le operazioni dall'apertura del conto), poi:
+
+```bash
+uv run python -m pfb_core riconcilia --prova   # confronta posizioni stimate e trade
+uv run python -m pfb_core riconcilia           # toglie le stime che i trade ricostruiscono
+```
 La liquidità di ogni conto parte dall'ultimo saldo noto (inserito a mano o letto dall'export
 BPER) più i movimenti successivi. Il rendimento è un XIRR calcolato dal giorno delle posizioni
 di partenza (o dal primo acquisto, se non ce ne sono); sotto l'anno viene mostrato cumulato,
