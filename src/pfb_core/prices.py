@@ -19,11 +19,38 @@ from pfb_core.models import Instrument, Price, Trade
 PriceProvider = Callable[[str, dt.date, dt.date], Iterable[tuple[dt.date, float | Decimal]]]
 
 
+CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={p1}&period2={p2}&interval=1d"
+
+
+def chart_provider(symbol: str, start: dt.date, end: dt.date) -> list[tuple[dt.date, Decimal]]:
+    """Storico dall'endpoint pubblico di Yahoo, solo libreria standard (usato sul telefono)."""
+    import json
+    import urllib.parse
+    import urllib.request
+
+    p1 = int(dt.datetime.combine(start, dt.time(), dt.UTC).timestamp())
+    p2 = int(dt.datetime.combine(end + dt.timedelta(days=1), dt.time(), dt.UTC).timestamp())
+    url = CHART_URL.format(symbol=urllib.parse.quote(symbol), p1=p1, p2=p2)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        data = json.load(r)["chart"]
+    if data.get("error"):
+        raise RuntimeError(data["error"].get("description") or str(data["error"]))
+    res = data["result"][0]
+    offset = dt.timedelta(seconds=res["meta"].get("gmtoffset", 0))
+    closes = res["indicators"]["quote"][0].get("close") or []
+    return [
+        ((dt.datetime.fromtimestamp(ts, dt.UTC) + offset).date(), Decimal(str(round(c, 6))))
+        for ts, c in zip(res.get("timestamp") or [], closes, strict=False)
+        if c is not None
+    ]
+
+
 def yahoo_provider(symbol: str, start: dt.date, end: dt.date) -> list[tuple[dt.date, Decimal]]:
     try:
         import yfinance as yf
-    except ImportError as exc:  # dipendenza opzionale: uv sync --extra prices
-        raise RuntimeError("yfinance non installato: uv sync --extra prices") from exc
+    except ImportError:  # extra opzionale assente (es. nell'APK): basta la libreria standard
+        return chart_provider(symbol, start, end)
     hist = yf.Ticker(symbol).history(
         start=start.isoformat(), end=(end + dt.timedelta(days=1)).isoformat(), auto_adjust=False
     )

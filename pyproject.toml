@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "sqlmodel>=0.0.22",
-    "pandas>=2.2",
     "xlrd>=2.0",       # export BPER (.xls Excel 97)
     "openpyxl>=3.1",   # migrazione storico dai fogli Google (.xlsx)
 ]
@@ -39,8 +38,23 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
-[tool.flet.app]
-path = "src"  # main.py e i pacchetti pfb_core / pfb_app finiscono nell'APK
-
 [tool.flet]
 product = "Personal Finance Bro"
+artifact = "finance-bro"
+org = "com.kelbec"  # bundle id: com.kelbec.finance_bro
+company = "Kelbec"
+
+[tool.flet.app]
+path = "src"  # main.py e i pacchetti pfb_core / pfb_app finiscono nell'APK
+exclude = [".flet", "__pycache__"]  # .flet: storage di `flet run`, mai nell'APK
+
+[tool.flet.android]
+# flet build aggiunge flet da solo solo se il progetto non ha dipendenze: qui va dichiarato.
+# certifi: lo script di avvio dell'APK lo importa prima di main.py (certificati HTTPS).
+dependencies = ["flet==1.0.3", "certifi"]
+split_per_abi = true  # un APK per architettura: quello arm64-v8a va bene per i telefoni recenti
+
+# il template di Flet 1.0.3 fissa jni 1.0.0, ma jni_flutter >= 1.0.4 richiede jni ^1.1:
+# senza questo blocco la compilazione Flutter fallisce (JniVersionCheck)
+[tool.flet.flutter.pubspec.dependency_overrides]
+jni_flutter = "1.0.1"

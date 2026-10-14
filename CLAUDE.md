@@ -12,7 +12,7 @@ sincronizzazione verso il foglio Google condiviso (`sheets_sync`, sezione `[goog
 
 ## Struttura
 - `src/pfb_core/` logica pura, senza dipendenze da Flet (models, importers/, rules, importer, seed,
-  metrics, prices, portfolio, history, sheets_sync)
+  metrics, prices, portfolio, history, sheets_sync, backup)
 - `src/pfb_app/` schermate Flet; `src/main.py` entry point (`[tool.flet.app] path = "src"`)
 - `tests/` pytest; `tests/conftest.py` genera un .xls BPER finto con xlwt
 
@@ -26,9 +26,15 @@ sincronizzazione verso il foglio Google condiviso (`sheets_sync`, sezione `[goog
 - Un branch per fase (`fase-N-...`) con PR verso `main`; CI = ruff + pytest.
 - Flet ≥ 1.0: `ft.run(main)`, `page.show_dialog(ft.SnackBar(...))`. `FilePicker` è un servizio:
   `page.services.append(picker)` + `page.update()` prima di `await picker.pick_files(...)`,
-  altrimenti il pulsante non fa nulla.
+  altrimenti il pulsante non fa nulla (helper `_file_picker` / `_pick_one` in views.py).
+- APK: le dipendenze sono `[project].dependencies` + `[tool.flet.android].dependencies` (flet e
+  certifi vanno dichiarati lì: `flet build` aggiunge flet solo se il progetto non ha dipendenze, e
+  lo script di avvio importa certifi). Devono avere wheel Android o essere pure Python. yfinance/gspread restano extra: sul telefono i prezzi usano
+  `chart_provider` (solo stdlib). Su Android il filtro per estensione del picker è disattivato.
+  `[tool.flet.flutter.pubspec.dependency_overrides] jni_flutter = "1.0.1"` serve finché il template
+  di Flet fissa jni 1.0.0. Gli avvisi Kotlin "Could not close incremental caches" non bloccano.
 
 ## Roadmap
 0 setup ✅ · 1 import e regole ✅ · 2 dashboard cashflow ✅ · 3 patrimonio ✅ (trade, prezzi
-yfinance, snapshot, XIRR) · 4 storico dai fogli ✅ (branch `fase-4-storico`) + Raspberry · 5 APK Android ·
+yfinance, snapshot, XIRR) · 4 storico dai fogli ✅ (branch `fase-4-storico`) + Raspberry · 5 APK Android ✅ (branch `fase-5-apk`, schermata Dati per copiare il DB) ·
 6 assistente con Ollama locale (notebook MSI, RTX 2060 6 GB → modelli 7–8B a 4 bit).
