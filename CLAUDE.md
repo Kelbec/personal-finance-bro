@@ -19,6 +19,8 @@ sincronizzazione verso il foglio Google condiviso (`sheets_sync`, sezione `[goog
 ## Regole
 - Importi sempre `Decimal`, mai float (eccezione: XIRR e rapporti per la UI).
 - `Snapshot.is_manual=True` = valore fornito (a mano o da export): ancora, mai ricalcolato.
+- Trade `iniziale` alla data D = posizione completa a D: i trade precedenti dello stesso
+  strumento/conto ci sono già dentro (`_trades_until` li esclude). Costo con commissioni.
 - Mai committare dati personali: export, `*.sqlite`, `config.toml`, IBAN, nomi, codice fiscale.
   Le fixture in `tests/fixtures/` vanno anonimizzate.
 - Un branch per fase (`fase-N-...`) con PR verso `main`; CI = ruff + pytest.

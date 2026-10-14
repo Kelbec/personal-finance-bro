@@ -471,6 +471,7 @@ class PortfolioView(ft.Column):
                     [
                         ft.Text(pos.instrument.ticker, width=70, weight=ft.FontWeight.W_600),
                         ft.Text(f"{pos.shares:.4f} q.", width=110),
+                        ft.Text(f"medio {_eur(pos.avg_price)}", width=140, size=12),
                         ft.Text(value, width=120),
                         ft.Text(pnl, color=color),
                     ]

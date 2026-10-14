@@ -37,6 +37,7 @@ from pfb_core.portfolio import (
     add_initial_position,
     build_all_snapshots,
     portfolio_summary,
+    reconcile_initial_positions,
     set_balance,
 )
 from pfb_core.prices import fetch_prices
@@ -70,7 +71,8 @@ def _cmd_import(args) -> None:
             names = ", ".join(s.exec(select(Account.name)).all())
             raise SystemExit(f"Conto {args.account!r} non trovato. Conti disponibili: {names}")
         try:
-            r = import_file(s, account, args.file)
+            since = dt.date.fromisoformat(args.movimenti_dal) if args.movimenti_dal else None
+            r = import_file(s, account, args.file, movements_from=since)
         except ImportFailed as exc:
             raise SystemExit(f"Import non riuscito: {exc}") from exc
     print(
@@ -80,6 +82,8 @@ def _cmd_import(args) -> None:
     )
     if r.balance_saved:
         print("  saldo di fine mese salvato")
+    if r.before_start:
+        print(f"  movimenti prima del {args.movimenti_dal} saltati: {r.before_start}")
     for msg in r.skipped:
         print(f"  saltata: {msg}")
 
@@ -149,10 +153,14 @@ def _cmd_portfolio(args) -> None:
     elif p.period_return is not None:
         print(f"  rendimento dal {p.xirr_since} (non annualizzato): {p.period_return:+.2%}")
     print()
+    print(f"  {'':<6} {'quote':>12}  {'prezzo medio':>12}  {'valore':>13}")
     for pos in p.positions:
         value = f"{pos.value:>11,.2f} €" if pos.value is not None else "  senza prezzo"
         pnl = f"{pos.pnl_pct:+.1%}" if pos.pnl_pct is not None else ""
-        print(f"  {pos.instrument.ticker:<6} {pos.shares:>12.4f}  {value}  {pnl}")
+        print(
+            f"  {pos.instrument.ticker:<6} {pos.shares:>12.4f}  {pos.avg_price:>10,.2f} €"
+            f"  {value}  {pnl}"
+        )
     for name, value in p.cash.items():
         print(f"  {name:<20} {value:>11,.2f} €")
     print()
@@ -238,6 +246,26 @@ def _cmd_sync_sheet(args) -> None:
         print("Prova: nessuna riga scritta")
 
 
+def _cmd_reconcile(args) -> None:
+    with session(get_engine(args.db)) as s:
+        rows = reconcile_initial_positions(s, apply=not args.prova)
+        if not rows:
+            print("Nessuna posizione di partenza: quote e prezzo medio vengono tutti dai trade")
+        for r in rows:
+            esito = ("tolta: si usano i trade" if r.removed
+                     else "da togliere: i trade la coprono" if r.covered
+                     else "resta: i trade non coprono la posizione")  # fmt: skip
+            print(
+                f"  {r.ticker:<6} al {r.day}: stimate {r.initial_shares:.4f}, dai trade "
+                f"{r.traded_shares:.4f} ({r.coverage:.1%}) → {esito}"
+            )
+        if any(r.removed for r in rows):
+            build_all_snapshots(s)
+            print("Snapshot ricalcolati")
+    if args.prova:
+        print("Prova: nessuna modifica")
+
+
 def main() -> None:
     for stream in (sys.stdout, sys.stderr):  # € e accenti nel terminale di Windows
         if hasattr(stream, "reconfigure"):
@@ -253,6 +281,11 @@ def main() -> None:
     p_imp = sub.add_parser("import", help="importa un export bancario")
     p_imp.add_argument("account", help="nome del conto, es. 'Trade Republic' o BPER")
     p_imp.add_argument("file")
+    p_imp.add_argument(
+        "--movimenti-dal",
+        help="YYYY-MM-DD: salta i movimenti di conto precedenti "
+        "(già nello storico) ma importa tutti i trade",
+    )
     p_imp.set_defaults(func=_cmd_import)
 
     p_rev = sub.add_parser("review", help="elenca i movimenti da categorizzare")
@@ -313,6 +346,14 @@ def main() -> None:
     )
     p_sync.add_argument("--righe", type=int, default=10, help="righe mostrate in prova")
     p_sync.set_defaults(func=_cmd_sync_sheet)
+
+    p_rec = sub.add_parser(
+        "riconcilia",
+        help="dopo l'import della storia completa del broker, toglie le "
+        "posizioni di partenza stimate che i trade ricostruiscono già",
+    )
+    p_rec.add_argument("--prova", action="store_true", help="mostra il confronto senza modifiche")
+    p_rec.set_defaults(func=_cmd_reconcile)
 
     args = parser.parse_args()
     args.func(args)

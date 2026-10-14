@@ -1,7 +1,10 @@
 """Patrimonio: posizioni, liquidità, snapshot di fine mese, rendimento (XIRR).
 
-- Quote: somma dei trade fino alla data (le posizioni di partenza sono trade `iniziale`).
-- Costo di carico: metodo del costo medio; le vendite riducono il costo in proporzione.
+- Quote: somma dei trade fino alla data. Una posizione di partenza (trade `iniziale`) alla
+  data D è tutto ciò che si possedeva quel giorno: i trade precedenti dello stesso strumento
+  ci sono già dentro e non vanno sommati di nuovo.
+- Costo di carico: metodo del costo medio, commissioni incluse (come il prezzo medio di
+  Trade Republic); le vendite riducono il costo in proporzione.
 - Liquidità di un conto: ultimo saldo "ancora" (inserito a mano o letto dall'export BPER)
   più i movimenti successivi. Senza ancora il saldo non è calcolabile.
 - XIRR: se ci sono posizioni di partenza, dal loro giorno, usando il valore di mercato di
@@ -62,6 +65,11 @@ class Position:
         return None if self.price is None else (self.shares * self.price).quantize(CENT)
 
     @property
+    def avg_price(self) -> Decimal:
+        """Prezzo medio di carico per quota."""
+        return self.cost / self.shares if self.shares else ZERO
+
+    @property
     def pnl(self) -> Decimal | None:
         return None if self.value is None else self.value - self.cost.quantize(CENT)
 
@@ -71,7 +79,24 @@ class Position:
 
 
 def _trades_until(s: Session, day: dt.date) -> list[Trade]:
-    return list(s.exec(select(Trade).where(Trade.date <= day).order_by(Trade.date, Trade.id)))
+    """Trade fino alla data, senza quelli già compresi in una posizione di partenza."""
+    trades = s.exec(select(Trade).where(Trade.date <= day).order_by(Trade.date, Trade.id)).all()
+    start: dict[tuple[int, str], dt.date] = {}  # (conto, strumento) -> ultima posizione iniziale
+    for t in trades:
+        if t.origin == "iniziale":
+            key = (t.account_id, t.isin)
+            start[key] = max(start.get(key, t.date), t.date)
+
+    def counts(t: Trade) -> bool:
+        since = start.get((t.account_id, t.isin), dt.date.min)
+        return t.date == since if t.origin == "iniziale" else t.date > since
+
+    return [t for t in trades if counts(t)]
+
+
+def _cash_flow(t: Trade) -> Decimal:
+    """Uscita (negativa) o entrata di un trade, commissione compresa."""
+    return t.amount - abs(t.fee or ZERO)
 
 
 def positions(s: Session, day: dt.date | None = None) -> list[Position]:
@@ -81,7 +106,7 @@ def positions(s: Session, day: dt.date | None = None) -> list[Position]:
     for t in _trades_until(s, day):
         if t.shares >= 0:
             shares[t.isin] += t.shares
-            cost[t.isin] += -t.amount if t.amount < 0 else t.shares * t.price
+            cost[t.isin] += -_cash_flow(t) if t.amount < 0 else t.shares * t.price
         else:
             held = shares[t.isin]
             if held > 0:
@@ -201,8 +226,16 @@ def build_snapshots(s: Session, month: dt.date) -> list[str]:
     by_account: dict[tuple[int, str], Decimal] = defaultdict(lambda: ZERO)
     for t in _trades_until(s, month):
         by_account[(t.account_id, t.isin)] += t.shares
+    manual_rows = s.exec(
+        select(Snapshot.account_id, Snapshot.isin).where(
+            Snapshot.month == month,
+            Snapshot.is_manual == True,  # noqa: E712
+            Snapshot.isin != None,  # noqa: E711
+        )
+    ).all()
+    manual = {(a, i) for a, i in manual_rows}
     for (account_id, isin), qty in by_account.items():
-        if qty <= 0:
+        if qty <= 0 or (account_id, isin) in manual:  # valore dal foglio: vale quello
             continue
         quote = price_on(s, isin, month)
         if quote is None:
@@ -336,17 +369,17 @@ class PortfolioSummary:
 
 
 def portfolio_xirr(s: Session, day: dt.date) -> tuple[float | None, dt.date | None]:
-    trades = s.exec(select(Trade).where(Trade.date <= day).order_by(Trade.date)).all()
+    trades = _trades_until(s, day)
     initial = [t.date for t in trades if t.origin == "iniziale"]
     if initial:
         start = max(initial)
         opening = sum((p.value or ZERO for p in positions(s, start)), ZERO)
         flows = [(start, -float(opening))]
-        flows += [(t.date, float(t.amount)) for t in trades
+        flows += [(t.date, float(_cash_flow(t))) for t in trades
                   if t.date > start and t.origin != "iniziale"]  # fmt: skip
     elif trades:
         start = trades[0].date
-        flows = [(t.date, float(t.amount)) for t in trades]  # acquisti negativi, vendite positive
+        flows = [(t.date, float(_cash_flow(t))) for t in trades]  # acquisti negativi
     else:
         return None, None
     current = sum((p.value or ZERO for p in positions(s, day)), ZERO)
@@ -371,3 +404,48 @@ def portfolio_summary(s: Session, day: dt.date | None = None) -> PortfolioSummar
         xirr=rate,
         xirr_since=since,
     )
+
+
+# --- riconciliazione delle posizioni di partenza -----------------------------
+@dataclass
+class Reconciliation:
+    ticker: str
+    day: dt.date
+    initial_shares: Decimal  # stimate (valore ÷ prezzo) o inserite a mano
+    traded_shares: Decimal  # dai trade veri fino a quel giorno
+    covered: bool  # i trade ricostruiscono la posizione
+    removed: bool
+
+    @property
+    def coverage(self) -> Decimal:
+        return self.traded_shares / self.initial_shares if self.initial_shares else Decimal(1)
+
+
+def reconcile_initial_positions(
+    s: Session, tolerance: Decimal = Decimal("0.02"), apply: bool = True
+) -> list[Reconciliation]:
+    """Toglie le posizioni di partenza che i trade importati ricostruiscono già.
+
+    Dopo l'import della storia completa del broker, quote e prezzo medio vengono dai singoli
+    acquisti (PAC inclusi) invece che da una stima. Si toglie una posizione di partenza solo
+    se i trade fino a quel giorno danno le stesse quote, a meno di `tolerance` (2%: le quote
+    stimate da valore ÷ prezzo non sono esatte). Le altre restano e prevalgono sui trade.
+    """
+    out = []
+    initial = s.exec(select(Trade).where(Trade.origin == "iniziale").order_by(Trade.date)).all()
+    for start in initial:
+        traded = sum(
+            (t.shares for t in s.exec(select(Trade).where(
+                Trade.account_id == start.account_id, Trade.isin == start.isin,
+                Trade.origin != "iniziale", Trade.date <= start.date)).all()),
+            ZERO,
+        )  # fmt: skip
+        diff = abs(traded - start.shares)
+        ok = traded > 0 and diff <= start.shares * tolerance
+        if ok and apply:
+            s.delete(start)
+        ticker = s.get(Instrument, start.isin).ticker
+        out.append(Reconciliation(ticker, start.date, start.shares, traded, covered=ok,
+                                  removed=ok and apply))  # fmt: skip
+    s.commit()
+    return out

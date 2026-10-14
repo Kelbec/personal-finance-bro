@@ -119,3 +119,16 @@ def test_correction_without_rule(s, tr_account, tr_csv):
     res = set_category(s, tx, gift.id, remember=False)
     assert res.rule is None
     assert _cat(s, tx) == "Regali/Beneficenza"
+
+
+def test_movements_from_keeps_all_trades(s, tr_account, tr_csv):
+    import datetime as dt
+
+    from pfb_core.models import Trade, Transaction
+
+    full = import_file(s, tr_account, tr_csv, movements_from=dt.date(2026, 9, 10))
+    assert full.before_start > 0
+    txs = s.exec(select(Transaction).where(Transaction.account_id == tr_account.id)).all()
+    assert min(t.date for t in txs) >= dt.date(2026, 9, 10)
+    trades = s.exec(select(Trade)).all()
+    assert min(t.date for t in trades) < dt.date(2026, 9, 10)  # i trade ci sono tutti
