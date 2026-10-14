@@ -117,6 +117,20 @@ def parse_tr_csv(path: str | Path) -> ParseResult:
             )
         )
 
+        # `amount` non comprende commissione e ritenuta: escono dal conto come movimenti a sé
+        fee = _dec(row["fee"])
+        if fee:
+            result.transactions.append(
+                ParsedTransaction(
+                    source_id=f"{tx_id}:fee",
+                    date=day,
+                    amount=-abs(fee),
+                    type="FEE",
+                    description=f"Commissione su {type_.lower()}",
+                    counterparty="Trade Republic",
+                )
+            )
+
         tax = _dec(row["tax"])
         if tax:
             result.transactions.append(
