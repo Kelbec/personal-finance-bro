@@ -39,6 +39,7 @@ DEFAULT_RULES: list[tuple[RuleField, str, str, int]] = [
     (F.TYPE, "BENEFITS_SAVEBACK", "Rendita finanziaria", PRIO_TYPE),
     (F.TYPE, "DIVIDEND", "Rendita finanziaria", PRIO_TYPE),
     (F.TYPE, "TAX", "Tassazione non lavorativa", PRIO_TYPE),
+    (F.TYPE, "FEE", "Costi bancari", PRIO_TYPE),
     # categoria della banca (BPER)
     (F.BANK_CATEGORY, "CANONE", "Costi bancari", PRIO_BANK),
     (F.BANK_CATEGORY, "COMMISSIONI", "Costi bancari", PRIO_BANK),

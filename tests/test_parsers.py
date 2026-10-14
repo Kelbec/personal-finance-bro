@@ -111,3 +111,24 @@ def test_bper_ids_stable_across_parses(bper_xls):
     a = [t.source_id for t in parse_bper_xls(bper_xls).transactions]
     b = [t.source_id for t in parse_bper_xls(bper_xls).transactions]
     assert a == b
+
+
+def test_tr_fee_is_a_separate_cash_movement(tmp_path, tr_csv):
+    import csv
+
+    from pfb_core.importers.trade_republic import parse_tr_csv
+
+    with open(tr_csv, encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    buy = next(r for r in rows if r["type"] == "BUY")
+    buy["fee"] = "-1.00"
+    f = tmp_path / "tr.csv"
+    with open(f, "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=rows[0].keys(), quoting=csv.QUOTE_ALL)
+        w.writeheader()
+        w.writerows(rows)
+    r = parse_tr_csv(f)
+    fee = [t for t in r.transactions if t.type == "FEE"]
+    assert [(t.source_id, t.amount) for t in fee] == [(f"{buy['transaction_id']}:fee", -1)]
+    trade = next(t for t in r.trades if t.source_id == buy["transaction_id"])
+    assert trade.fee == -1  # e resta nel costo di carico del trade
