@@ -82,16 +82,19 @@ def test_portfolio_view_renders_and_saves_balance(engine, s, tr_account):
                (c.content.content.controls[0] for c in view.kpis.controls))  # fmt: skip
 
 
-def test_pick_registers_picker_on_page_and_imports(engine, tr_account, tr_csv, monkeypatch):
+@pytest.mark.parametrize("mobile", [False, True])
+def test_pick_registers_picker_on_page_and_imports(engine, tr_account, tr_csv, monkeypatch, mobile):
     from pfb_app import views
 
     updates = []
-    page = SimpleNamespace(services=[], update=lambda: updates.append(1))
+    page = SimpleNamespace(services=[], update=lambda: updates.append(1),
+                           platform=SimpleNamespace(is_mobile=lambda: mobile))  # fmt: skip
     monkeypatch.setattr(views, "_page", lambda control: page)
     monkeypatch.setattr(views, "_refresh", lambda control: None)
 
     async def fake_pick(self, **kwargs):
-        assert kwargs["allowed_extensions"] == ["csv"]
+        # su Android il filtro per estensione nasconde i .csv: si sceglie tra tutti i file
+        assert kwargs["allowed_extensions"] == (None if mobile else ["csv"])
         return [SimpleNamespace(path=str(tr_csv), name=tr_csv.name, bytes=None)]
 
     monkeypatch.setattr(ft.FilePicker, "pick_files", fake_pick)
@@ -156,3 +159,20 @@ def test_sync_without_config_does_nothing(engine, tmp_path):
     view = AddView(engine, tmp_path / "config.toml")
     view._on_sync(None)
     assert view._plan is None
+
+
+def test_data_view_shows_database_summary(tmp_path):
+    from pfb_app.views import DataView
+    from pfb_core.db import get_engine, init_db
+
+    db = tmp_path / "pfb.sqlite"
+    init_db(get_engine(db))
+    view = DataView(db)
+    assert view.info.value.startswith("0 movimenti su 0 conti")
+
+
+def test_data_view_on_missing_database(tmp_path):
+    from pfb_app.views import DataView
+
+    view = DataView(tmp_path / "manca.sqlite")
+    assert "inesistente" in view.info.value

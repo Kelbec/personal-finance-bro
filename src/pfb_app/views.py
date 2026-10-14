@@ -13,6 +13,7 @@ import flet as ft
 from sqlalchemy import Engine
 from sqlmodel import select
 
+from pfb_core.backup import InvalidDatabase, inspect, snapshot_bytes
 from pfb_core.db import session
 from pfb_core.importer import ImportFailed, import_file
 from pfb_core.metrics import MonthSummary, available_months, month_summary, monthly_trend
@@ -62,6 +63,45 @@ def _toast(control: ft.Control, text: str, error: bool = False) -> None:
     )
 
 
+def _file_picker(page: ft.Page) -> ft.FilePicker:
+    """Il FilePicker della pagina. È un servizio: va registrato prima dell'uso, altrimenti
+    il client non lo conosce e la chiamata resta muta."""
+    for service in page.services:
+        if isinstance(service, ft.FilePicker):
+            return service
+    picker = ft.FilePicker()
+    page.services.append(picker)
+    page.update()
+    return picker
+
+
+async def _pick_one(control: ft.Control, title: str, extensions: list[str] | None) -> Path | None:
+    """Fa scegliere un file e ne ritorna un percorso locale (su Android/web arrivano i byte)."""
+    page = _page(control)
+    if page is None:
+        return None
+    if page.platform.is_mobile():  # Android filtra per tipo MIME: .csv/.xls spesso risultano grigi
+        extensions = None
+    try:
+        files = await _file_picker(page).pick_files(
+            dialog_title=title,
+            file_type=ft.FilePickerFileType.CUSTOM if extensions else ft.FilePickerFileType.ANY,
+            allowed_extensions=extensions,
+            with_data=True,  # necessario su web e Android, dove non c'è un percorso locale
+        )
+    except Exception as exc:  # noqa: BLE001  (l'errore va mostrato, non perso nel log)
+        _toast(control, f"Selezione file non riuscita: {exc}", error=True)
+        return None
+    if not files:
+        return None
+    f = files[0]
+    if f.path and Path(f.path).is_file():
+        return Path(f.path)
+    tmp = Path(tempfile.mkdtemp()) / f.name
+    tmp.write_bytes(f.bytes or b"")
+    return tmp
+
+
 def _category_options(engine: Engine) -> list[ft.dropdown.Option]:
     """Categorie nell'ordine dei gruppi: entrate, spese, risparmio, extra."""
     with session(engine) as s:
@@ -80,7 +120,6 @@ class ImportView(ft.Column):
         super().__init__(spacing=16, expand=True)
         self.engine = engine
         self.on_imported = on_imported
-        self.picker: ft.FilePicker | None = None
         with session(engine) as s:
             accounts = s.exec(select(Account).where(Account.source != AccountSource.MANUALE)).all()
             self.accounts = {str(a.id): (a.name, a.source) for a in accounts}
@@ -109,33 +148,9 @@ class ImportView(ft.Column):
             _toast(self, "Scegli prima il conto", error=True)
             return
         name, source = self.accounts[self.account.value]
-        page = _page(self)
-        if page is None:
-            return
-        if self.picker is None:  # è un servizio: va registrato sulla pagina prima dell'uso
-            self.picker = ft.FilePicker()
-            page.services.append(self.picker)
-            page.update()  # senza update il client non conosce il servizio e la chiamata resta muta
-        try:
-            files = await self.picker.pick_files(
-                dialog_title=f"Export {name}",
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=EXTENSIONS[source],
-                with_data=True,  # necessario su web e Android, dove non c'è un percorso locale
-            )
-        except Exception as exc:  # noqa: BLE001  (l'errore va mostrato, non perso nel log)
-            _toast(self, f"Selezione file non riuscita: {exc}", error=True)
-            return
-        if not files:
-            return
-        f = files[0]
-        if f.path:
-            path = Path(f.path)
-        else:
-            tmp = Path(tempfile.mkdtemp()) / f.name
-            tmp.write_bytes(f.bytes or b"")
-            path = tmp
-        self._run_import(int(self.account.value), path)
+        path = await _pick_one(self, f"Export {name}", EXTENSIONS[source])
+        if path is not None:
+            self._run_import(int(self.account.value), path)
 
     def _run_import(self, account_id: int, path: Path) -> None:
         try:
@@ -320,15 +335,21 @@ class DashboardView(ft.Column):
             ft.Text("Nessuna spesa categorizzata in questo mese.")
         ]
         self.trend.controls = [
-            ft.Row(
-                [
-                    ft.Text(_month_label(t.month), width=70),
-                    ft.Text(f"entrate {_eur(t.income)}", width=170),
-                    ft.Text(f"uscite {_eur(t.expenses)}", width=170),
-                    ft.Text(
-                        f"risparmio {t.savings_rate:.0%}" if t.savings_rate is not None else "—"
-                    ),
-                ]
+            ft.Column(  # due righe: sta anche sullo schermo del telefono
+                spacing=0,
+                controls=[
+                    ft.Row(
+                        [
+                            ft.Text(_month_label(t.month), weight=ft.FontWeight.W_600, expand=True),
+                            ft.Text(
+                                f"risparmio {t.savings_rate:.0%}"
+                                if t.savings_rate is not None
+                                else "—"
+                            ),
+                        ]
+                    ),  # fmt: skip
+                    ft.Text(f"entrate {_eur(t.income)}  ·  uscite {_eur(t.expenses)}", size=12),
+                ],
             )
             for t in trend
         ]
@@ -467,40 +488,49 @@ class PortfolioView(ft.Column):
                 color = ft.Colors.GREEN if pos.pnl >= 0 else ft.Colors.ERROR
             value = _eur(pos.value) if pos.value is not None else "senza prezzo"
             rows.append(
-                ft.Row(
-                    [
-                        ft.Text(pos.instrument.ticker, width=70, weight=ft.FontWeight.W_600),
-                        ft.Text(f"{pos.shares:.4f} q.", width=110),
-                        ft.Text(f"medio {_eur(pos.avg_price)}", width=140, size=12),
-                        ft.Text(value, width=120),
-                        ft.Text(pnl, color=color),
-                    ]
-                )
+                ft.Column(  # due righe: sta anche sullo schermo del telefono
+                    spacing=0,
+                    controls=[
+                        ft.Row(
+                            [
+                                ft.Text(
+                                    pos.instrument.ticker, weight=ft.FontWeight.W_600, expand=True
+                                ),
+                                ft.Text(value),
+                                ft.Text(pnl, color=color, width=60, text_align=ft.TextAlign.RIGHT),
+                            ]
+                        ),
+                        ft.Text(f"{pos.shares:.4f} q.  ·  medio {_eur(pos.avg_price)}", size=12),
+                    ],
+                )  # fmt: skip
             )
         for name, value in p.cash.items():
-            rows.append(ft.Row([ft.Text(name, width=180), ft.Text(_eur(value))]))
+            rows.append(ft.Row([ft.Text(name, expand=True), ft.Text(_eur(value))]))
         self.positions.controls = rows
         self.history.controls = [
             ft.Row(
                 [
                     ft.Text(f"{m.month:%m/%Y}", width=70),
-                    ft.Text(_eur(m.total), width=130),
-                    ft.Text(f"liquidità {_eur(m.by_class.get('cash', 0))}", size=12),
+                    ft.Text(_eur(m.total), expand=True),
+                    ft.Text(f"liq. {_eur(m.by_class.get('cash', 0))}", size=12),
                 ]
             )  # fmt: skip
             for m in reversed(series)
         ]
 
-    def _on_update(self, e) -> None:
-        with session(self.engine) as s:
-            r = fetch_prices(s)
-            warnings = build_all_snapshots(s)
+    async def _on_update(self, e) -> None:
+        _toast(self, "Scarico i prezzi...")
+        r, warnings = await asyncio.to_thread(self._update_blocking)  # rete: fuori dalla UI
         msgs = [f"Manca il simbolo Yahoo per {t}" for t in r.missing_symbol]
         msgs += [f"{t}: {err[:80]}" for t, err in r.errors.items()]
         msgs += warnings[-5:]
         self.warnings.controls = [ft.Text(m, size=12, color=ft.Colors.ERROR) for m in msgs]
         _toast(self, f"Prezzi nuovi: {sum(r.saved.values())}")
         self.refresh()
+
+    def _update_blocking(self):
+        with session(self.engine) as s:
+            return fetch_prices(s), build_all_snapshots(s)
 
     def _on_balance(self, e) -> None:
         try:
@@ -682,3 +712,92 @@ class AddView(ft.Column):
         client = client or GspreadClient(cfg)
         with session(self.engine) as s:
             return run_sync(s, plan_sync(s, cfg), client)
+
+
+class DataView(ft.Column):
+    """Database dell'app: copia da e verso il PC (il telefono tiene un suo SQLite)."""
+
+    def __init__(self, db_path: Path, on_replace: Callable[[Path], None] | None = None):
+        super().__init__(spacing=12, expand=True, scroll=ft.ScrollMode.AUTO)
+        self.db_path = Path(db_path)
+        self.on_replace = on_replace
+        self.info = ft.Text()
+        self.controls = [
+            ft.Text("Dati", size=22, weight=ft.FontWeight.BOLD),
+            self.info,
+            ft.Text("Dal PC al telefono", size=16, weight=ft.FontWeight.W_600),
+            ft.Text(
+                "Copia data/pfb.sqlite dal PC al telefono (cavo, Drive, mail a te stesso) e "
+                "sceglilo qui: sostituisce il database del telefono, di cui resta una copia.",
+                size=12,
+            ),
+            ft.FilledButton("Importa database", icon=ft.Icons.DOWNLOAD, on_click=self._on_import),
+            ft.Text("Dal telefono al PC", size=16, weight=ft.FontWeight.W_600),
+            ft.Text(
+                "Dopo un import fatto qui, salva il database e mettilo al posto di "
+                "data/pfb.sqlite sul PC (con l'app del PC chiusa).",
+                size=12,
+            ),
+            ft.OutlinedButton("Esporta database", icon=ft.Icons.UPLOAD, on_click=self._on_export),
+        ]
+        self.refresh(update=False)
+
+    def refresh(self, update: bool = True) -> None:
+        try:
+            i = inspect(self.db_path)
+            last = f"{i.last_date:%d/%m/%Y}" if i.last_date else "—"
+            self.info.value = (f"{i.transactions} movimenti su {i.accounts} conti, "
+                               f"ultimo del {last}\n{self.db_path}")  # fmt: skip
+        except InvalidDatabase as exc:
+            self.info.value = str(exc)
+        if update:
+            _refresh(self)
+
+    async def _on_import(self, e) -> None:
+        path = await _pick_one(self, "Database di Personal Finance Bro", ["sqlite", "db"])
+        if path is None:
+            return
+        try:
+            new = inspect(path)
+        except InvalidDatabase as exc:
+            _toast(self, str(exc), error=True)
+            return
+        page = _page(self)
+        if page is None:
+            return
+        last = f"{new.last_date:%d/%m/%Y}" if new.last_date else "—"
+
+        def confirm(_) -> None:
+            page.pop_dialog()
+            if self.on_replace:
+                self.on_replace(path)
+
+        page.show_dialog(
+            ft.AlertDialog(
+                title=ft.Text("Sostituire il database?"),
+                content=ft.Text(
+                    f"Il file scelto ha {new.transactions} movimenti (ultimo del {last}).\n"
+                    "Quello attuale viene salvato come copia accanto al database."
+                ),
+                actions=[
+                    ft.TextButton("Annulla", on_click=lambda _: page.pop_dialog()),
+                    ft.FilledButton("Sostituisci", on_click=confirm),
+                ],
+            )
+        )
+
+    async def _on_export(self, e) -> None:
+        page = _page(self)
+        if page is None:
+            return
+        try:
+            saved = await _file_picker(page).save_file(
+                dialog_title="Salva il database",
+                file_name=f"pfb-{dt.date.today():%Y-%m-%d}.sqlite",
+                src_bytes=snapshot_bytes(self.db_path),
+            )
+        except Exception as exc:  # noqa: BLE001
+            _toast(self, f"Esportazione non riuscita: {exc}", error=True)
+            return
+        if saved:
+            _toast(self, "Database salvato")

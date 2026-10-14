@@ -123,6 +123,24 @@ una regola sulla controparte e la applica subito agli altri movimenti uguali.
 
 ## Privacy
 
+## Sul telefono (APK Android)
+
+```bash
+uv run --extra app flet build apk     # la prima volta scarica Flutter, JDK e Android SDK
+# risultato: build/apk/ — installa sul telefono l'APK arm64-v8a
+```
+
+Il telefono tiene un suo database. Dalla schermata **Dati** (icona in alto a destra):
+
+- **Importa database**: scegli il `data/pfb.sqlite` copiato dal PC; quello del telefono viene
+  salvato come copia accanto prima di essere sostituito.
+- **Esporta database**: dopo un import fatto sul telefono, salva il file e mettilo al posto di
+  `data/pfb.sqlite` sul PC (con l'app del PC chiusa).
+
+Sul telefono funzionano import degli export, revisione, dashboard, patrimonio e prezzi
+(senza yfinance: l'app usa direttamente l'endpoint pubblico di Yahoo). La sincronizzazione
+col foglio Google resta sul PC, perché richiede `config.toml` e la chiave dell'account di servizio.
+
 Export bancari, database e `config.toml` sono esclusi da git (vedi `.gitignore`).
 Per i test si usano solo file anonimizzati in `tests/fixtures/`.
 
@@ -135,5 +153,5 @@ Per i test si usano solo file anonimizzati in `tests/fixtures/`.
 | 2 · Dashboard cashflow | Entrate/uscite, savings rate, budget, categorie |
 | 3 · Patrimonio | Trade dal CSV, prezzi yfinance, snapshot mensili, XIRR |
 | 4 · Storico e Raspberry | Migrazione dai fogli Google ✅, web app sul Raspberry Pi |
-| 5 · App nativa | APK Android con database sul telefono |
+| 5 · App nativa | APK Android con database sul telefono, copia da/verso il PC ✅ |
 | 6 · Assistente | Chat con LLM locale (Ollama) sui propri dati |

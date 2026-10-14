@@ -1221,7 +1221,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "openpyxl" },
-    { name = "pandas" },
     { name = "sqlmodel" },
     { name = "xlrd" },
 ]
@@ -1259,7 +1258,6 @@ requires-dist = [
     { name = "gspread", marker = "extra == 'sheets'", specifier = ">=6" },
     { name = "ollama", marker = "extra == 'assistant'", specifier = ">=0.4" },
     { name = "openpyxl", specifier = ">=3.1" },
-    { name = "pandas", specifier = ">=2.2" },
     { name = "sqlmodel", specifier = ">=0.0.22" },
     { name = "xlrd", specifier = ">=2.0" },
     { name = "yfinance", marker = "extra == 'prices'", specifier = ">=0.2" },
