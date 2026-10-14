@@ -44,6 +44,7 @@ class ImportReport:
     to_review: int
     balance_saved: bool
     skipped: list[str]
+    before_start: int = 0  # movimenti saltati perché prima di `movements_from`
 
     @property
     def coverage(self) -> float:
@@ -84,7 +85,12 @@ def _save_balance(s: Session, account: Account, parsed: ParseResult) -> bool:
     return True
 
 
-def import_file(s: Session, account: Account, path: str | Path) -> ImportReport:
+def import_file(
+    s: Session, account: Account, path: str | Path, movements_from: dt.date | None = None
+) -> ImportReport:
+    """Importa un export. Con `movements_from` i movimenti di conto precedenti vengono
+    saltati (es. già nello storico dei fogli) mentre i trade si importano tutti: serve
+    a ricostruire quote e prezzo medio da una storia completa del broker."""
     path = Path(path)
     parser = PARSERS.get(account.source)
     if parser is None:
@@ -105,8 +111,11 @@ def import_file(s: Session, account: Account, path: str | Path) -> ImportReport:
     known_trades = set(s.exec(select(Trade.source_id).where(Trade.account_id == account.id)).all())
 
     rules = load_rules(s)
-    new = dup = categorized = internal = 0
+    new = dup = categorized = internal = before = 0
     for p in parsed.transactions:
+        if movements_from and p.date < movements_from:
+            before += 1
+            continue
         if p.source_id in known_tx:
             dup += 1
             continue
@@ -167,4 +176,5 @@ def import_file(s: Session, account: Account, path: str | Path) -> ImportReport:
         to_review=new - categorized - internal,
         balance_saved=balance_saved,
         skipped=parsed.skipped,
+        before_start=before,
     )

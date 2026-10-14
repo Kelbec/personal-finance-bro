@@ -71,7 +71,8 @@ def _cmd_import(args) -> None:
             names = ", ".join(s.exec(select(Account.name)).all())
             raise SystemExit(f"Conto {args.account!r} non trovato. Conti disponibili: {names}")
         try:
-            r = import_file(s, account, args.file)
+            since = dt.date.fromisoformat(args.movimenti_dal) if args.movimenti_dal else None
+            r = import_file(s, account, args.file, movements_from=since)
         except ImportFailed as exc:
             raise SystemExit(f"Import non riuscito: {exc}") from exc
     print(
@@ -81,6 +82,8 @@ def _cmd_import(args) -> None:
     )
     if r.balance_saved:
         print("  saldo di fine mese salvato")
+    if r.before_start:
+        print(f"  movimenti prima del {args.movimenti_dal} saltati: {r.before_start}")
     for msg in r.skipped:
         print(f"  saltata: {msg}")
 
@@ -278,6 +281,11 @@ def main() -> None:
     p_imp = sub.add_parser("import", help="importa un export bancario")
     p_imp.add_argument("account", help="nome del conto, es. 'Trade Republic' o BPER")
     p_imp.add_argument("file")
+    p_imp.add_argument(
+        "--movimenti-dal",
+        help="YYYY-MM-DD: salta i movimenti di conto precedenti "
+        "(già nello storico) ma importa tutti i trade",
+    )
     p_imp.set_defaults(func=_cmd_import)
 
     p_rev = sub.add_parser("review", help="elenca i movimenti da categorizzare")
