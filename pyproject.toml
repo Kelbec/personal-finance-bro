@@ -50,3 +50,8 @@ exclude = [".flet", "__pycache__"]  # .flet: storage di `flet run`, mai nell'APK
 
 [tool.flet.android]
 split_per_abi = true  # un APK per architettura: quello arm64-v8a va bene per i telefoni recenti
+
+# il template di Flet 1.0.3 fissa jni 1.0.0, ma jni_flutter >= 1.0.4 richiede jni ^1.1:
+# senza questo blocco la compilazione Flutter fallisce (JniVersionCheck)
+[tool.flet.flutter.pubspec.dependency_overrides]
+jni_flutter = "1.0.1"
