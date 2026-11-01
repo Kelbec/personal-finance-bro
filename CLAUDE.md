@@ -32,7 +32,10 @@ sincronizzazione verso il foglio Google condiviso (`sheets_sync`, sezione `[goog
   lo script di avvio importa certifi). Devono avere wheel Android o essere pure Python. yfinance/gspread restano extra: sul telefono i prezzi usano
   `chart_provider` (solo stdlib); gspread invece è nelle dipendenze Android, con config.toml e chiave importati dalla schermata Dati (`setup_files`). Su Android il filtro per estensione del picker è disattivato.
   `[tool.flet.flutter.pubspec.dependency_overrides] jni_flutter = "1.0.1"` serve finché il template
-  di Flet fissa jni 1.0.0. Gli avvisi Kotlin "Could not close incremental caches" non bloccano.
+  di Flet fissa jni 1.0.0. Stesso blocco: `shared_preferences_android = "2.4.28"` (dalla 2.5.0 vuole
+  jni ^1.1.0 e la build fallisce). Senza lockfile Flutter, un pacchetto nuovo può rompere la build
+  a parità di codice: se succede, cerca nel log "expect package:jni" e blocca la versione precedente.
+  Gli avvisi Kotlin "Could not close incremental caches" non bloccano.
 
 ## Roadmap
 0 setup ✅ · 1 import e regole ✅ · 2 dashboard cashflow ✅ · 3 patrimonio ✅ (trade, prezzi
