@@ -156,6 +156,10 @@ git commit -am "Versione 0.3.0" && git push
 git tag v0.3.0 && git push origin v0.3.0
 ```
 
+In alternativa, anche dal telefono: dopo aver alzato la versione e fatto il merge su `main`,
+GitHub → Actions → *Release APK* → *Run workflow* (ramo `main`). Il workflow crea da solo il tag
+`vX.Y.Z` con la versione di `pyproject.toml`; si ferma se quel tag esiste già.
+
 Per installare ogni APK sopra il precedente, senza disinstallare, serve una chiave di firma
 fissa. Si crea una volta sola e si salva nei secret del repository:
 

@@ -1,9 +1,13 @@
 name: Release APK
 
-# Si attiva con un tag di versione: git tag v0.3.0 && git push origin v0.3.0
+# Due modi per rilasciare:
+# - tag di versione: git tag v0.3.0 && git push origin v0.3.0
+# - a mano, anche dal telefono: Actions → Release APK → Run workflow (ramo main). Il tag
+#   vX.Y.Z viene creato dal workflow stesso, con la versione di pyproject.toml.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write  # serve a creare la release e ad allegarle gli APK
@@ -16,9 +20,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
 
+      - name: Tag della release
+        run: |
+          toml=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "::error::Si rilascia solo dal ramo main (scelto: $GITHUB_REF_NAME)"
+              exit 1
+            fi
+            tag="v$toml"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+              echo "::error::Il tag $tag esiste già: alza la versione in pyproject.toml e in src/pfb_core/__init__.py"
+              exit 1
+            fi
+          else
+            tag="$GITHUB_REF_NAME"
+          fi
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "Release $tag"
+
       - name: La versione del tag coincide con quella del codice
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${RELEASE_TAG#v}"
           toml=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
           code=$(grep -m1 '__version__' src/pfb_core/__init__.py | cut -d'"' -f2)
           echo "tag=$tag pyproject=$toml pfb_core=$code"
@@ -64,7 +87,7 @@ jobs:
           for f in build/apk/*.apk; do
             # flet li chiama <artifact>-<abi>.apk (es. finance-bro-arm64-v8a.apk)
             abi=$(basename "$f" .apk | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86)$' || echo universale)
-            out="dist/finance-bro-${GITHUB_REF_NAME}-${abi}.apk"
+            out="dist/finance-bro-${RELEASE_TAG}-${abi}.apk"
             if [ -e "$out" ]; then
               echo "::error::Due APK avrebbero lo stesso nome ($out): uno sovrascriverebbe l'altro"
               exit 1
@@ -82,5 +105,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.apk \
-            --title "$GITHUB_REF_NAME" --generate-notes
+          # --target vale solo se il tag non esiste ancora (avvio a mano): lo crea su questo commit
+          gh release create "$RELEASE_TAG" dist/*.apk \
+            --title "$RELEASE_TAG" --generate-notes --target "$GITHUB_SHA"

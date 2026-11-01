@@ -1,6 +1,6 @@
 [project]
 name = "personal-finance-bro"
-version = "0.2.2"
+version = "0.2.3"
 description = "Gestione locale di cashflow e investimenti a partire dagli export di Trade Republic e BPER"
 readme = "README.md"
 requires-python = ">=3.11"
