@@ -54,17 +54,29 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Build APK
-        run: uv run --extra app flet build apk --yes
+        # --build-number: il versionCode di Android deve crescere a ogni release
+        run: uv run --extra app flet build apk --yes --build-number ${{ github.run_number }}
 
       - name: Rinomina gli APK con la versione
         run: |
           ls -l build/apk
           mkdir dist
           for f in build/apk/*.apk; do
-            abi=$(basename "$f" .apk | sed -E 's/^.*-(arm64-v8a|armeabi-v7a|x86_64|x86)-.*$/\1/; t; s/.*/universale/')
-            cp "$f" "dist/finance-bro-${GITHUB_REF_NAME}-${abi}.apk"
+            # flet li chiama <artifact>-<abi>.apk (es. finance-bro-arm64-v8a.apk)
+            abi=$(basename "$f" .apk | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86)$' || echo universale)
+            out="dist/finance-bro-${GITHUB_REF_NAME}-${abi}.apk"
+            if [ -e "$out" ]; then
+              echo "::error::Due APK avrebbero lo stesso nome ($out): uno sovrascriverebbe l'altro"
+              exit 1
+            fi
+            cp "$f" "$out"
           done
           ls -l dist
+          # il telefono ha bisogno dell'APK arm64-v8a: senza, l'installazione dà "App non installata"
+          if [ "$(ls dist | grep -c -e arm64-v8a -e universale)" -eq 0 ]; then
+            echo "::error::Nessun APK arm64-v8a (né universale) tra gli APK compilati"
+            exit 1
+          fi
 
       - name: Crea la release
         env:

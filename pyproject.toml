@@ -1,6 +1,6 @@
 [project]
 name = "personal-finance-bro"
-version = "0.2.1"
+version = "0.2.2"
 description = "Gestione locale di cashflow e investimenti a partire dagli export di Trade Republic e BPER"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,7 +41,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.flet]
 product = "Personal Finance Bro"
 artifact = "finance-bro"
-org = "com.kelbec"  # bundle id: com.kelbec.finance_bro
+org = "com.kelbec"  # bundle id: com.kelbec.personal_finance_bro (org + [project].name)
 company = "Kelbec"
 
 [tool.flet.app]
