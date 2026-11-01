@@ -304,3 +304,39 @@ def test_gspread_broken_dependency_names_the_real_cause(tmp_path, monkeypatch):
     monkeypatch.delitem(sys.modules, "gspread", raising=False)
     with pytest.raises(RuntimeError, match="non si carica.*dipendenza_che_non_esiste"):
         GspreadClient(_client_cfg(tmp_path))
+
+
+def test_wsgiref_stub_when_missing(monkeypatch):
+    import sys
+
+    from pfb_core.sheets_sync import _ensure_wsgiref
+
+    for name in ("wsgiref", "wsgiref.simple_server", "wsgiref.util"):
+        monkeypatch.setitem(sys.modules, name, None)  # import → ImportError, come su Android
+    _ensure_wsgiref()
+    import wsgiref.simple_server as server
+    import wsgiref.util as util
+
+    # google_auth_oauthlib ne eredita le classi al momento dell'import
+    class Mine(server.WSGIServer):
+        pass
+
+    class Handler(server.WSGIRequestHandler):
+        pass
+
+    with pytest.raises(RuntimeError, match="wsgiref"):
+        server.make_server("localhost", 0, None)
+    with pytest.raises(RuntimeError, match="wsgiref"):
+        util.request_uri({})
+
+
+def test_wsgiref_real_module_is_left_alone():
+    import wsgiref.simple_server as before
+
+    from pfb_core.sheets_sync import _ensure_wsgiref
+
+    _ensure_wsgiref()
+    import wsgiref.simple_server as after
+
+    assert after is before
+    assert hasattr(after, "make_server") and after.__file__
