@@ -39,6 +39,7 @@ from pfb_core.sheets_sync import (
     plan_sync,
     run_sync,
 )
+from pfb_core.updates import UpdateError, UpdateInfo, check_update
 
 EXTENSIONS = {AccountSource.CSV_TR: ["csv"], AccountSource.XLS_BPER: ["xls"]}
 
@@ -732,9 +733,22 @@ class DataView(ft.Column):
         self.config_path = Path(config_path) if config_path else None
         self.on_config = on_config
         self.info = ft.Text()
+        self.update_info: UpdateInfo | None = None
+        self.update_status = ft.Text(size=12)
+        self.update_download = ft.FilledButton(
+            "Scarica l'aggiornamento", icon=ft.Icons.DOWNLOAD, visible=False,
+            on_click=self._on_download_update,
+        )  # fmt: skip
         self.controls = [
             ft.Text("Dati", size=22, weight=ft.FontWeight.BOLD),
             ft.Text(f"Versione {__version__}", size=12, italic=True),
+            ft.OutlinedButton(
+                "Controlla aggiornamenti",
+                icon=ft.Icons.SYSTEM_UPDATE,
+                on_click=self._on_check_update,
+            ),  # fmt: skip
+            self.update_status,
+            self.update_download,
             self.info,
             ft.Text("Dal PC al telefono", size=16, weight=ft.FontWeight.W_600),
             ft.Text(
@@ -812,6 +826,43 @@ class DataView(ft.Column):
                 ],
             )
         )
+
+    async def _on_check_update(self, e) -> None:
+        try:
+            self.update_info = await asyncio.to_thread(check_update, __version__)
+        except UpdateError as exc:
+            self.update_status.value = f"Controllo non riuscito: {exc}"
+            self.update_download.visible = False
+        else:
+            self._show_update()
+        _refresh(self)
+
+    def _show_update(self) -> None:
+        info = self.update_info
+        if info is None:
+            self.update_status.value = f"Sei aggiornato (versione {__version__})."
+        else:
+            self.update_status.value = (
+                f"Disponibile la versione {info.version} (hai la {__version__}). Scarica l'APK "
+                "e toccalo per installare: i dati restano."
+            )
+            if not info.apk_url:
+                self.update_status.value += " La release non ha un APK: si apre la pagina."
+        self.update_download.visible = info is not None
+
+    async def _on_download_update(self, e) -> None:
+        page = _page(self)
+        if page is None or self.update_info is None:
+            return
+        launcher = next((x for x in page.services if isinstance(x, ft.UrlLauncher)), None)
+        if launcher is None:  # servizio da registrare prima dell'uso, come il FilePicker
+            launcher = ft.UrlLauncher()
+            page.services.append(launcher)
+            page.update()
+        try:
+            await launcher.launch_url(self.update_info.apk_url or self.update_info.page_url)
+        except Exception as exc:  # noqa: BLE001
+            _toast(self, f"Apertura del link non riuscita: {exc}", error=True)
 
     async def _on_import_config(self, e) -> None:
         path = await _pick_one(self, "config.toml", ["toml"])
