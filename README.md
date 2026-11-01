@@ -144,7 +144,7 @@ col foglio Google resta sul PC, perché richiede `config.toml` e la chiave dell'
 Export bancari, database e `config.toml` sono esclusi da git (vedi `.gitignore`).
 Per i test si usano solo file anonimizzati in `tests/fixtures/`.
 
-### Release automatica
+## Release automatica
 
 Un tag `vX.Y.Z` fa partire il workflow `Release APK`: controlla che il tag coincida con la
 versione in `pyproject.toml` e `src/pfb_core/__init__.py`, esegue ruff e pytest, compila gli APK
