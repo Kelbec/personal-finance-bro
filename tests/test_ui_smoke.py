@@ -215,3 +215,16 @@ def test_setup_files_reject_invalid(tmp_path):
     with pytest.raises(InvalidSetupFile):
         import_credentials(js, tmp_path)
     assert not (tmp_path / "config.toml").exists()
+
+
+def test_data_view_shows_version_matching_pyproject(tmp_path):
+    import tomllib
+    from pathlib import Path
+
+    from pfb_app.views import DataView
+    from pfb_core import __version__
+
+    declared = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert __version__ == declared["version"]
+    view = DataView(tmp_path / "x.sqlite")
+    assert any(f"Versione {__version__}" == getattr(c, "value", None) for c in view.controls)

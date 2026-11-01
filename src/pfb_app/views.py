@@ -13,6 +13,7 @@ import flet as ft
 from sqlalchemy import Engine
 from sqlmodel import select
 
+from pfb_core import __version__
 from pfb_core.backup import InvalidDatabase, inspect, snapshot_bytes
 from pfb_core.db import session
 from pfb_core.importer import ImportFailed, import_file
@@ -733,6 +734,7 @@ class DataView(ft.Column):
         self.info = ft.Text()
         self.controls = [
             ft.Text("Dati", size=22, weight=ft.FontWeight.BOLD),
+            ft.Text(f"Versione {__version__}", size=12, italic=True),
             self.info,
             ft.Text("Dal PC al telefono", size=16, weight=ft.FontWeight.W_600),
             ft.Text(
