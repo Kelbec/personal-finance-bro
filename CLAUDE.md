@@ -30,7 +30,7 @@ sincronizzazione verso il foglio Google condiviso (`sheets_sync`, sezione `[goog
 - APK: le dipendenze sono `[project].dependencies` + `[tool.flet.android].dependencies` (flet e
   certifi vanno dichiarati lì: `flet build` aggiunge flet solo se il progetto non ha dipendenze, e
   lo script di avvio importa certifi). Devono avere wheel Android o essere pure Python. yfinance/gspread restano extra: sul telefono i prezzi usano
-  `chart_provider` (solo stdlib). Su Android il filtro per estensione del picker è disattivato.
+  `chart_provider` (solo stdlib); gspread invece è nelle dipendenze Android, con config.toml e chiave importati dalla schermata Dati (`setup_files`). Su Android il filtro per estensione del picker è disattivato.
   `[tool.flet.flutter.pubspec.dependency_overrides] jni_flutter = "1.0.1"` serve finché il template
   di Flet fissa jni 1.0.0. Gli avvisi Kotlin "Could not close incremental caches" non bloccano.
 

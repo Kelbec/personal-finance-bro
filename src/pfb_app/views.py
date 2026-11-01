@@ -28,6 +28,7 @@ from pfb_core.portfolio import (
 )
 from pfb_core.prices import fetch_prices
 from pfb_core.rules import mark_internal, pending_review, set_category
+from pfb_core.setup_files import InvalidSetupFile, import_config, import_credentials
 from pfb_core.sheets_sync import (
     GspreadClient,
     SyncPlan,
@@ -717,10 +718,18 @@ class AddView(ft.Column):
 class DataView(ft.Column):
     """Database dell'app: copia da e verso il PC (il telefono tiene un suo SQLite)."""
 
-    def __init__(self, db_path: Path, on_replace: Callable[[Path], None] | None = None):
+    def __init__(
+        self,
+        db_path: Path,
+        on_replace: Callable[[Path], None] | None = None,
+        config_path: Path | None = None,
+        on_config: Callable[[], None] | None = None,
+    ):
         super().__init__(spacing=12, expand=True, scroll=ft.ScrollMode.AUTO)
         self.db_path = Path(db_path)
         self.on_replace = on_replace
+        self.config_path = Path(config_path) if config_path else None
+        self.on_config = on_config
         self.info = ft.Text()
         self.controls = [
             ft.Text("Dati", size=22, weight=ft.FontWeight.BOLD),
@@ -740,6 +749,22 @@ class DataView(ft.Column):
             ),
             ft.OutlinedButton("Esporta database", icon=ft.Icons.UPLOAD, on_click=self._on_export),
         ]
+        if self.config_path:
+            self.controls += [
+                ft.Text("Configurazione", size=16, weight=ft.FontWeight.W_600),
+                ft.Text(
+                    "Per sincronizzare il foglio Google dal telefono servono config.toml (con "
+                    "[google_sheet]) e la chiave dell'account di servizio. Restano nella "
+                    "cartella privata dell'app: cancella le copie passate da Drive o mail.",
+                    size=12,
+                ),
+                ft.OutlinedButton(
+                    "Importa config.toml", icon=ft.Icons.SETTINGS, on_click=self._on_import_config
+                ),
+                ft.OutlinedButton(
+                    "Importa chiave Google", icon=ft.Icons.KEY, on_click=self._on_import_key
+                ),
+            ]
         self.refresh(update=False)
 
     def refresh(self, update: bool = True) -> None:
@@ -785,6 +810,28 @@ class DataView(ft.Column):
                 ],
             )
         )
+
+    async def _on_import_config(self, e) -> None:
+        path = await _pick_one(self, "config.toml", ["toml"])
+        if path is not None:
+            self._install(lambda: import_config(path, self.config_path), "config.toml importato")
+
+    async def _on_import_key(self, e) -> None:
+        path = await _pick_one(self, "Chiave dell'account di servizio", ["json"])
+        if path is not None:
+            self._install(
+                lambda: import_credentials(path, self.config_path.parent), "Chiave Google importata"
+            )
+
+    def _install(self, action: Callable[[], Path], done: str) -> None:
+        try:
+            action()
+        except (InvalidSetupFile, OSError) as exc:
+            _toast(self, str(exc), error=True)
+            return
+        if self.on_config:
+            self.on_config()
+        _toast(self, done)
 
     async def _on_export(self, e) -> None:
         page = _page(self)
