@@ -1,6 +1,6 @@
 [project]
 name = "personal-finance-bro"
-version = "0.2.0"
+version = "0.2.1"
 description = "Gestione locale di cashflow e investimenti a partire dagli export di Trade Republic e BPER"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -57,5 +57,9 @@ split_per_abi = true  # un APK per architettura: quello arm64-v8a va bene per i 
 
 # il template di Flet 1.0.3 fissa jni 1.0.0, ma jni_flutter >= 1.0.4 richiede jni ^1.1:
 # senza questo blocco la compilazione Flutter fallisce (JniVersionCheck)
+# shared_preferences_android >= 2.5.0 (17/10/2026) genera binding che vogliono jni ^1.1.0 e con
+# jni 1.0.0 la build fallisce: si resta sull'ultima versione senza jni. Da togliere quando il
+# template di Flet passerà a jni >= 1.1.
 [tool.flet.flutter.pubspec.dependency_overrides]
 jni_flutter = "1.0.1"
+shared_preferences_android = "2.4.28"
