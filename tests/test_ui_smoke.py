@@ -228,3 +228,20 @@ def test_data_view_shows_version_matching_pyproject(tmp_path):
     assert __version__ == declared["version"]
     view = DataView(tmp_path / "x.sqlite")
     assert any(f"Versione {__version__}" == getattr(c, "value", None) for c in view.controls)
+
+
+def test_data_view_update_status(tmp_path):
+    from pfb_app.views import DataView
+    from pfb_core import __version__
+    from pfb_core.updates import UpdateInfo
+
+    view = DataView(tmp_path / "x.sqlite")
+    assert view.update_download.visible is False
+    view.update_info = UpdateInfo("9.9.9", "v9.9.9", "https://x/a.apk", "https://x/p")
+    view._show_update()
+    assert view.update_download.visible is True
+    assert "9.9.9" in view.update_status.value
+    view.update_info = None
+    view._show_update()
+    assert view.update_download.visible is False
+    assert __version__ in view.update_status.value

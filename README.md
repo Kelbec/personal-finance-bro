@@ -167,6 +167,10 @@ base64 -w0 release.jks     # → secret ANDROID_KEYSTORE_BASE64
 
 Conserva `release.jks` fuori da git: se lo perdi, gli aggiornamenti richiedono di disinstallare l'app.
 
+Sul telefono, **Dati → Controlla aggiornamenti** confronta la versione installata con l'ultima
+release (repo pubblico) e apre il link dell'APK arm64-v8a: Android lo scarica e lo installa sopra
+quello esistente, a patto che sia firmato con la stessa chiave.
+
 ## Roadmap
 
 | Fase | Contenuto |
