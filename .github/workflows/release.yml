@@ -1,0 +1,74 @@
+name: Release APK
+
+# Si attiva con un tag di versione: git tag v0.3.0 && git push origin v0.3.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write  # serve a creare la release e ad allegarle gli APK
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - name: La versione del tag coincide con quella del codice
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          toml=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          code=$(grep -m1 '__version__' src/pfb_core/__init__.py | cut -d'"' -f2)
+          echo "tag=$tag pyproject=$toml pfb_core=$code"
+          if [ "$tag" != "$toml" ] || [ "$tag" != "$code" ]; then
+            echo "::error::Il tag v$tag non coincide con la versione in pyproject.toml ($toml) e src/pfb_core/__init__.py ($code)"
+            exit 1
+          fi
+
+      - run: uv sync --group dev --extra app
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest -q
+
+      # Un APK firmato sempre con la stessa chiave si installa sopra il precedente senza
+      # disinstallare (e senza perdere il database del telefono). Senza il secret la build
+      # usa la chiave di debug del runner, diversa a ogni esecuzione.
+      - name: Chiave di firma (facoltativa)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::warning::Nessuna chiave di firma (secret ANDROID_KEYSTORE_BASE64): l'APK non si installerà sopra una versione firmata con un'altra chiave"
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "FLET_ANDROID_SIGNING_KEY_STORE=$RUNNER_TEMP/release.jks"
+            echo "FLET_ANDROID_SIGNING_KEY_STORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "FLET_ANDROID_SIGNING_KEY_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "FLET_ANDROID_SIGNING_KEY_ALIAS=${KEY_ALIAS:-pfb}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build APK
+        run: uv run --extra app flet build apk --yes
+
+      - name: Rinomina gli APK con la versione
+        run: |
+          ls -l build/apk
+          mkdir dist
+          for f in build/apk/*.apk; do
+            abi=$(basename "$f" .apk | sed -E 's/^.*-(arm64-v8a|armeabi-v7a|x86_64|x86)-.*$/\1/; t; s/.*/universale/')
+            cp "$f" "dist/finance-bro-${GITHUB_REF_NAME}-${abi}.apk"
+          done
+          ls -l dist
+
+      - name: Crea la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.apk \
+            --title "$GITHUB_REF_NAME" --generate-notes

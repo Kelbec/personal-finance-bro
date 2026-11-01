@@ -144,6 +144,29 @@ col foglio Google resta sul PC, perché richiede `config.toml` e la chiave dell'
 Export bancari, database e `config.toml` sono esclusi da git (vedi `.gitignore`).
 Per i test si usano solo file anonimizzati in `tests/fixtures/`.
 
+### Release automatica
+
+Un tag `vX.Y.Z` fa partire il workflow `Release APK`: controlla che il tag coincida con la
+versione in `pyproject.toml` e `src/pfb_core/__init__.py`, esegue ruff e pytest, compila gli APK
+e li allega a una release GitHub (da scaricare sul telefono).
+
+```bash
+# alza la versione in pyproject.toml e src/pfb_core/__init__.py, poi:
+git commit -am "Versione 0.3.0" && git push
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+Per installare ogni APK sopra il precedente, senza disinstallare, serve una chiave di firma
+fissa. Si crea una volta sola e si salva nei secret del repository:
+
+```bash
+keytool -genkeypair -v -keystore release.jks -alias pfb -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 release.jks     # → secret ANDROID_KEYSTORE_BASE64
+# altri secret: ANDROID_KEYSTORE_PASSWORD (e, se l'alias non è "pfb", ANDROID_KEY_ALIAS)
+```
+
+Conserva `release.jks` fuori da git: se lo perdi, gli aggiornamenti richiedono di disinstallare l'app.
+
 ## Roadmap
 
 | Fase | Contenuto |
