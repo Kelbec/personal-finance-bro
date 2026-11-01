@@ -270,3 +270,37 @@ def test_next_row_ignores_gaps_and_formula_tails():
     rows = [header, ["a", "🏠 Casa", 1, 45685, 1], ["", "", "", "", ""],  # riga vuota in mezzo
             ["b", "🏠 Casa", 2, 45686, 1], ["", "", "", "", 12], ["", "", "", "", 12]]  # fmt: skip
     assert detect_layout(rows).next_row(rows) == 5  # dopo "b", non nel buco e non in fondo
+
+
+def _client_cfg(tmp_path):
+    from pfb_core.sheets_sync import SheetConfig
+
+    return SheetConfig(
+        spreadsheet="id", credentials=tmp_path / "k.json", since=dt.date(2026, 1, 1), tabs={}
+    )
+
+
+def test_gspread_missing_says_how_to_install(tmp_path, monkeypatch):
+    import sys
+
+    from pfb_core.sheets_sync import GspreadClient
+
+    monkeypatch.setitem(
+        sys.modules, "gspread", None
+    )  # import gspread → ImportError(name="gspread")
+    with pytest.raises(RuntimeError, match="gspread non installato"):
+        GspreadClient(_client_cfg(tmp_path))
+
+
+def test_gspread_broken_dependency_names_the_real_cause(tmp_path, monkeypatch):
+    import sys
+
+    from pfb_core.sheets_sync import GspreadClient
+
+    pkg = tmp_path / "gspread"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("import dipendenza_che_non_esiste\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "gspread", raising=False)
+    with pytest.raises(RuntimeError, match="non si carica.*dipendenza_che_non_esiste"):
+        GspreadClient(_client_cfg(tmp_path))

@@ -88,7 +88,12 @@ class GspreadClient:
         try:
             import gspread
         except ImportError as exc:
-            raise RuntimeError("gspread non installato: uv sync --extra sheets") from exc
+            if exc.name == "gspread":
+                raise RuntimeError("gspread non installato: uv sync --extra sheets") from exc
+            # gspread c'è, ma una sua dipendenza (google-auth, cryptography...) non si carica
+            raise RuntimeError(
+                f"gspread installato ma non si carica: manca o non parte {exc.name or '?'} ({exc})"
+            ) from exc
         if not cfg.credentials.exists():
             raise RuntimeError(f"chiave dell'account di servizio non trovata: {cfg.credentials}")
         from gspread.utils import ValueInputOption, ValueRenderOption
