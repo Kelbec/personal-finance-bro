@@ -176,3 +176,55 @@ def test_data_view_on_missing_database(tmp_path):
 
     view = DataView(tmp_path / "manca.sqlite")
     assert "inesistente" in view.info.value
+
+
+def test_data_view_imports_config_and_key(tmp_path):
+    import json
+
+    from pfb_app.views import DataView
+    from pfb_core.setup_files import import_config, import_credentials
+
+    cfg = tmp_path / "app" / "config.toml"
+    called = []
+    view = DataView(tmp_path / "x.sqlite", config_path=cfg, on_config=lambda: called.append(1))
+    src = tmp_path / "nuovo.toml"
+    src.write_text('[google_sheet]\nfoglio = "id"\ndal = "2026-01-01"\n', encoding="utf-8")
+    view._install(lambda: import_config(src, cfg), "ok")
+    assert cfg.read_text(encoding="utf-8") == src.read_text(encoding="utf-8")
+    assert called == [1]
+
+    key = tmp_path / "k.json"
+    key.write_text(
+        json.dumps({"type": "service_account", "client_email": "a@b", "private_key": "k"})
+    )
+    view._install(lambda: import_credentials(key, cfg.parent), "ok")
+    assert (cfg.parent / "google-credentials.json").exists()
+
+
+def test_setup_files_reject_invalid(tmp_path):
+    import pytest
+
+    from pfb_core.setup_files import InvalidSetupFile, import_config, import_credentials
+
+    bad = tmp_path / "bad.toml"
+    bad.write_text("= non toml", encoding="utf-8")
+    with pytest.raises(InvalidSetupFile):
+        import_config(bad, tmp_path / "config.toml")
+    js = tmp_path / "x.json"
+    js.write_text('{"a": 1}')
+    with pytest.raises(InvalidSetupFile):
+        import_credentials(js, tmp_path)
+    assert not (tmp_path / "config.toml").exists()
+
+
+def test_data_view_shows_version_matching_pyproject(tmp_path):
+    import tomllib
+    from pathlib import Path
+
+    from pfb_app.views import DataView
+    from pfb_core import __version__
+
+    declared = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert __version__ == declared["version"]
+    view = DataView(tmp_path / "x.sqlite")
+    assert any(f"Versione {__version__}" == getattr(c, "value", None) for c in view.controls)

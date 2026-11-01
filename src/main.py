@@ -58,7 +58,7 @@ def main(page: ft.Page) -> None:
             engine, on_imported=lambda: (review.refresh(), dashboard.refresh(), portfolio.refresh())
         )
         add = AddView(engine, CONFIG_PATH, on_added=dashboard.refresh)
-        data = DataView(DB_PATH, on_replace=replace)
+        data = DataView(DB_PATH, on_replace=replace, config_path=CONFIG_PATH, on_config=build)
         views: list[ft.Control] = [dashboard, portfolio, imports, add, review]
         body = ft.Container(content=views[0], expand=True, padding=16)
 
