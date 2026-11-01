@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import sys
 import tomllib
+import types
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -81,10 +83,36 @@ class SheetClient(Protocol):
     ) -> None: ...
 
 
+def _ensure_wsgiref() -> None:
+    """Sul telefono (Python di serious_python) manca `wsgiref`, che google_auth_oauthlib
+    importa e di cui eredita due classi al momento dell'import. Serve solo al login
+    interattivo, che qui non si usa (account di servizio): basta un guscio vuoto. Dove
+    `wsgiref` c'è davvero (PC) non si tocca nulla."""
+    try:
+        import wsgiref.simple_server  # noqa: F401
+        import wsgiref.util  # noqa: F401
+    except ImportError:
+
+        def unavailable(*args, **kwargs):
+            raise RuntimeError("wsgiref non è disponibile su questo dispositivo")
+
+        pkg = types.ModuleType("wsgiref")
+        pkg.__path__ = []
+        server = types.ModuleType("wsgiref.simple_server")
+        server.WSGIServer = type("WSGIServer", (), {})
+        server.WSGIRequestHandler = type("WSGIRequestHandler", (), {})
+        server.make_server = unavailable
+        util = types.ModuleType("wsgiref.util")
+        util.request_uri = unavailable
+        pkg.simple_server, pkg.util = server, util
+        sys.modules.update({"wsgiref": pkg, "wsgiref.simple_server": server, "wsgiref.util": util})
+
+
 class GspreadClient:
     """Client reale (gspread). Dipendenza opzionale: pip install gspread."""
 
     def __init__(self, cfg: SheetConfig):
+        _ensure_wsgiref()
         try:
             import gspread
         except ImportError as exc:
